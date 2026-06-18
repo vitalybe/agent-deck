@@ -415,6 +415,29 @@ func TestRenameGroup(t *testing.T) {
 	}
 }
 
+// TestDefaultPathSurvivesRename verifies that an explicit startup folder set on a
+// group is preserved when the group is renamed (the UI sets it before renaming),
+// and that ExplicitDefaultPathForGroup reports the configured value without the
+// most-recent-session fallback.
+func TestDefaultPathSurvivesRename(t *testing.T) {
+	tree := NewGroupTree([]*Instance{{ID: "1", GroupPath: "Interviews"}})
+
+	if got := tree.ExplicitDefaultPathForGroup("Interviews"); got != "" {
+		t.Fatalf("explicit default path before set = %q, want empty", got)
+	}
+
+	tree.SetDefaultPathForGroup("Interviews", "/Users/me/interviews")
+	if got := tree.ExplicitDefaultPathForGroup("Interviews"); got != "/Users/me/interviews" {
+		t.Fatalf("explicit default path after set = %q, want %q", got, "/Users/me/interviews")
+	}
+
+	tree.RenameGroup("Interviews", "Job Interviews")
+
+	if got := tree.ExplicitDefaultPathForGroup("Job-Interviews"); got != "/Users/me/interviews" {
+		t.Errorf("default path after rename = %q, want %q (should survive re-keying)", got, "/Users/me/interviews")
+	}
+}
+
 func TestRenameGroupWithSubgroups(t *testing.T) {
 	tree := NewGroupTree([]*Instance{})
 

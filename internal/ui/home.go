@@ -7836,7 +7836,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeGroup {
-				h.groupDialog.ShowRename(item.Path, item.Group.Name)
+				h.groupDialog.ShowRename(item.Path, item.Group.Name, h.groupTree.ExplicitDefaultPathForGroup(item.Path))
 			} else if item.Type == session.ItemTypeSession && item.Session != nil {
 				h.groupDialog.ShowRenameSession(item.Session.ID, item.Session.Title)
 			} else if item.Type == session.ItemTypeRemoteSession && item.RemoteSession != nil {
@@ -9615,7 +9615,12 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case GroupDialogRename:
 			name := h.groupDialog.GetValue()
 			if name != "" {
-				h.groupTree.RenameGroup(h.groupDialog.GetGroupPath(), name)
+				groupPath := h.groupDialog.GetGroupPath()
+				// Persist the (possibly edited) startup folder before the rename
+				// changes the group key. SetDefaultPathForGroup mutates the group
+				// object in place, so the value survives RenameGroup's re-keying.
+				h.groupTree.SetDefaultPathForGroup(groupPath, h.groupDialog.GetDefaultPath())
+				h.groupTree.RenameGroup(groupPath, name)
 				h.instancesMu.Lock()
 				h.instances = h.groupTree.GetAllInstances()
 				h.instancesMu.Unlock()
