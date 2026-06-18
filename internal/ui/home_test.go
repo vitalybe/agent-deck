@@ -2994,6 +2994,67 @@ func TestRebuildFlatItemsKeepsValidStatusFilter(t *testing.T) {
 	}
 }
 
+// TestRebuildFlatItemsKeepsDetachExemptSession verifies that the session we just
+// detached from stays visible even when its new status (stopped) is excluded by
+// the engaged active filter, and that the exemption is dropped once the user
+// changes the filter.
+func TestRebuildFlatItemsKeepsDetachExemptSession(t *testing.T) {
+	home := NewHome()
+	home.initialLoading = false
+	home.activeFilterExcludes = map[session.Status]bool{
+		session.StatusError:   true,
+		session.StatusStopped: true,
+	}
+
+	// s1 is running (matches the active filter); s2 just got detached and is now
+	// stopped (excluded by the filter).
+	inst1 := &session.Instance{ID: "s1", Title: "Session 1", Tool: "claude", Status: session.StatusRunning}
+	inst2 := &session.Instance{ID: "s2", Title: "Session 2", Tool: "claude", Status: session.StatusStopped}
+
+	home.instancesMu.Lock()
+	home.instances = []*session.Instance{inst1, inst2}
+	home.instanceByID[inst1.ID] = inst1
+	home.instanceByID[inst2.ID] = inst2
+	home.instancesMu.Unlock()
+	home.groupTree = session.NewGroupTree(home.instances)
+
+	home.statusFilter = FilterModeActive
+
+	countSessions := func() int {
+		n := 0
+		for _, item := range home.flatItems {
+			if item.Type == session.ItemTypeSession {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Without the exemption, the stopped session is hidden.
+	home.rebuildFlatItems()
+	if got := countSessions(); got != 1 {
+		t.Fatalf("expected 1 visible session without exemption, got %d", got)
+	}
+
+	// Grant the exemption (as the detach path does) and rebuild: both visible.
+	home.filterExemptID = "s2"
+	home.filterExemptFilter = FilterModeActive
+	home.rebuildFlatItems()
+	if got := countSessions(); got != 2 {
+		t.Fatalf("expected 2 visible sessions with detach exemption, got %d", got)
+	}
+
+	// Changing the filter clears the exemption; the stopped session drops out.
+	home.statusFilter = session.StatusRunning
+	home.rebuildFlatItems()
+	if home.filterExemptID != "" {
+		t.Errorf("filterExemptID should be cleared after filter change, got %q", home.filterExemptID)
+	}
+	if got := countSessions(); got != 1 {
+		t.Errorf("expected 1 visible session after filter change, got %d", got)
+	}
+}
+
 func TestMatchesStatusFilter(t *testing.T) {
 	// Default matches upstream's original hardcoded behavior so existing
 	// users see no change unless they opt into a narrower exclude-set.
