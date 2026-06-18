@@ -454,6 +454,14 @@ type Home struct {
 	activeFilterLabel    string                  // from config.toml [display] active_filter_label
 	activeFilterExcludes map[session.Status]bool // from config.toml [display] active_filter_excludes; default {error}
 
+	// filterExemptID is the session we most recently detached from. It is kept
+	// visible despite the engaged status filter (so detaching never makes a row
+	// vanish out from under the cursor), until the filter itself changes.
+	// filterExemptFilter records the filter that was active when the exemption
+	// was granted, so rebuildFlatItems can auto-clear it once the user re-filters.
+	filterExemptID     string
+	filterExemptFilter session.Status
+
 	// showSessionTimestamps gates the dim "Nm ago" badge on each session row.
 	// Cached here so all rows of a single frame see the same value even if
 	// the user toggles the setting mid-frame. Reloaded after the panel saves.
@@ -1894,13 +1902,20 @@ func (h *Home) rebuildFlatItems() {
 		allItems = partitioned
 	}
 
+	// Drop a stale detach exemption once the user re-filters: the exemption only
+	// makes sense for the filter that was engaged when we detached.
+	if h.filterExemptID != "" && h.filterExemptFilter != h.statusFilter {
+		h.filterExemptID = ""
+		h.filterExemptFilter = ""
+	}
+
 	// Apply status filter if active (skip when browsing archived list).
 	if h.statusFilter != "" && h.statusFilter != FilterModeArchived {
 		// First pass: identify groups that have matching sessions
 		groupsWithMatches := make(map[string]bool)
 		for _, item := range allItems {
 			if item.Type == session.ItemTypeSession && item.Session != nil {
-				if h.matchesStatusFilter(h.statusFilter, item.Session.Status) {
+				if h.filterMatchOrExempt(item.Session) {
 					// Mark this session's group and all parent groups as having matches
 					groupsWithMatches[item.Path] = true
 					// Also mark parent paths
@@ -1922,8 +1937,9 @@ func (h *Home) rebuildFlatItems() {
 					filtered = append(filtered, item)
 				}
 			} else if item.Type == session.ItemTypeSession && item.Session != nil {
-				// Keep session if it matches the filter
-				if h.matchesStatusFilter(h.statusFilter, item.Session.Status) {
+				// Keep session if it matches the filter (or is the just-detached
+				// session, temporarily exempt from filtering).
+				if h.filterMatchOrExempt(item.Session) {
 					filtered = append(filtered, item)
 				}
 			}
@@ -5447,6 +5463,15 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reconcile the attached session synchronously before the normal delayed
 		// refresh so an exited pane does not render as still running for a tick.
 		h.refreshAttachedSessionStatus(msg.attachedSessionID)
+
+		// Keep the session we just detached from visible even if its new status
+		// (e.g. stopped) falls outside the engaged filter, so the row does not
+		// vanish out from under the cursor on return. Cleared when the user
+		// re-filters (see rebuildFlatItems).
+		if msg.attachedSessionID != "" {
+			h.filterExemptID = msg.attachedSessionID
+			h.filterExemptFilter = h.statusFilter
+		}
 
 		selectedBefore := h.captureSelectedItemIdentity()
 		h.rebuildFlatItemsPreservingSelection(selectedBefore)
@@ -17947,6 +17972,22 @@ func (h *Home) matchesStatusFilter(filter, status session.Status) bool {
 		return !h.activeFilterExcludes[status]
 	}
 	return status == filter
+}
+
+// filterMatchOrExempt reports whether a session should survive the current
+// status filter. It passes either when its status matches the filter or when it
+// is the session we just detached from (see filterExemptID): detaching often
+// flips a session into an excluded status (e.g. stopped), and yanking the row
+// out from under the cursor the instant the user returns is jarring. The
+// exemption lasts until the filter changes (cleared in rebuildFlatItems).
+func (h *Home) filterMatchOrExempt(sess *session.Instance) bool {
+	if sess == nil {
+		return false
+	}
+	if h.filterExemptID != "" && sess.ID == h.filterExemptID {
+		return true
+	}
+	return h.matchesStatusFilter(h.statusFilter, sess.Status)
 }
 
 // renderFilterBarHint renders the filter-bar keyboard-shortcut hint with the
