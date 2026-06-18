@@ -464,6 +464,13 @@ type Home struct {
 	// one. Cached here so all rows of a frame agree; reloaded after panel save.
 	showPaneTitles bool
 
+	// frameUniformTool holds the single tool name shared by every session in the
+	// deck, or "" when the deck is empty, mixed, or all-shell. Recomputed once
+	// per frame in View() so the header and every row agree. When non-empty, the
+	// redundant per-row tool label is suppressed and the harness name is hoisted
+	// into the header instead (e.g. "Agent Deck (claude)").
+	frameUniformTool string
+
 	// Sessions/Preview split (issue #1092): percentage of width allocated to
 	// preview pane. Loaded from config.toml [ui] preview_pct, adjustable
 	// live via < and > keybindings, persisted back to config on adjustment.
@@ -3529,6 +3536,25 @@ func (h *Home) refreshSessionRenderSnapshot(instances []*session.Instance) {
 		snap[inst.ID] = state
 	}
 	h.sessionRenderSnapshot.Store(snap)
+}
+
+// deckUniformTool returns the single tool shared by every session in the
+// snapshot, or "" when the deck is empty, uses more than one tool, or contains
+// any shell session ("" tool — no harness name worth hoisting). Tool-agnostic:
+// a deck that is all-claude returns "claude", all-gemini returns "gemini", etc.
+func deckUniformTool(snapshot map[string]sessionRenderState) string {
+	tool := ""
+	for _, state := range snapshot {
+		if state.tool == "" {
+			return ""
+		}
+		if tool == "" {
+			tool = state.tool
+		} else if state.tool != tool {
+			return ""
+		}
+	}
+	return tool
 }
 
 func (h *Home) getSessionRenderState(inst *session.Instance) sessionRenderState {
@@ -12356,6 +12382,11 @@ func (h *Home) View() string {
 	running, waiting, idle, stopped, errored := h.countSessionStatuses()
 	logo := RenderLogoCompact(running, waiting, idle)
 
+	// Resolve the deck-wide tool once per frame so the header and every row
+	// agree (see frameUniformTool). Drives both the suppressed per-row label
+	// and the "(tool)" header tag below.
+	h.frameUniformTool = deckUniformTool(h.getSessionRenderSnapshot())
+
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(ColorAccent)
@@ -12367,6 +12398,13 @@ func (h *Home) View() string {
 			Foreground(ColorCyan).
 			Bold(true)
 		titleText = "Agent Deck " + profileStyle.Render("["+h.profile+"]")
+	}
+	// Hoist the deck-wide harness name into the header when every session shares
+	// one tool — the per-row label is suppressed in that case, so this is where
+	// the user reads which harness the deck is running (e.g. "Agent Deck (claude)").
+	if h.frameUniformTool != "" {
+		toolTagStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+		titleText += " " + toolTagStyle.Render("("+h.frameUniformTool+")")
 	}
 	if h.groupScope != "" {
 		scopeStyle := lipgloss.NewStyle().
@@ -14755,7 +14793,13 @@ func (h *Home) renderSessionItem(
 		}
 	}
 
-	tool := toolStyle.Render(" " + instTool)
+	// In a single-harness deck the per-row tool label is pure noise — suppress
+	// it (and reserve no width for it); the harness name is shown in the header
+	// instead. Any mixed deck flips frameUniformTool to "" so labels return.
+	tool := ""
+	if h.frameUniformTool == "" {
+		tool = toolStyle.Render(" " + instTool)
+	}
 
 	// Supervisor badge for the maestro row.
 	maestroBadge := ""
@@ -15006,9 +15050,10 @@ func (h *Home) renderWindowItem(b *strings.Builder, item session.Item, selected 
 	winLabel := indexStyle.Render(fmt.Sprintf("[%d]", item.WindowIndex))
 	winName := nameStyle.Render(" " + item.WindowName)
 
-	// Tool badge (if detected)
+	// Tool badge (if detected). Suppressed in a single-harness deck to match the
+	// session rows, which drop their tool label for the same reason.
 	toolBadge := ""
-	if item.WindowTool != "" {
+	if item.WindowTool != "" && item.WindowTool != h.frameUniformTool {
 		toolStyle := GetToolStyle(item.WindowTool)
 		if selected {
 			toolStyle = SessionStatusSelStyle
