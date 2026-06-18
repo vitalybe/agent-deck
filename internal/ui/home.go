@@ -1865,10 +1865,16 @@ func (h *Home) rebuildFlatItems() {
 	viewArchived := h.statusFilter == FilterModeArchived
 	if viewArchived || h.hasArchivedSessions() {
 		groupsWithMatches := h.archiveGroupsWithMatches(viewArchived)
+		// Genuinely-empty groups (no sessions anywhere in their subtree) should
+		// keep their headers in the active view — just like Normal view with no
+		// archived sessions. Only groups that *have* sessions but none matching
+		// the partition (e.g. archived-only groups in the active view) are
+		// dropped here.
+		groupsWithSessions := h.groupsWithAnySession()
 		partitioned := make([]session.Item, 0, len(allItems))
 		for _, item := range allItems {
 			if item.Type == session.ItemTypeGroup {
-				if groupsWithMatches[item.Path] {
+				if groupsWithMatches[item.Path] || !groupsWithSessions[item.Path] {
 					partitioned = append(partitioned, item)
 				}
 			} else if item.Type == session.ItemTypeSession && item.Session != nil {
@@ -17853,6 +17859,24 @@ func (h *Home) archiveGroupsWithMatches(viewArchived bool) map[string]bool {
 		}
 	}
 	return groupsWithMatches
+}
+
+// groupsWithAnySession returns group paths that contain at least one session
+// anywhere in their subtree, regardless of archive/status. Used to tell a
+// genuinely-empty group (which should always show its header) apart from a
+// group whose sessions are merely filtered out of the current view.
+func (h *Home) groupsWithAnySession() map[string]bool {
+	groupsWithSessions := make(map[string]bool)
+	if h == nil || h.groupTree == nil {
+		return groupsWithSessions
+	}
+	for _, group := range h.groupTree.GroupList {
+		if group == nil || len(group.Sessions) == 0 {
+			continue
+		}
+		markGroupPathAndAncestors(groupsWithSessions, group.Path)
+	}
+	return groupsWithSessions
 }
 
 func markGroupPathAndAncestors(groupsWithMatches map[string]bool, groupPath string) {
