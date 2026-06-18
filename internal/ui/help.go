@@ -499,10 +499,9 @@ func (h *HelpOverlay) View() string {
 		content.WriteString(footerStyle.Render("Press any key to close"))
 	}
 
-	// Wrap in dialog box
-	box := DialogBoxStyle.
-		Width(dialogWidth).
-		Render(content.String())
+	// Wrap in dialog box (renderDialogBox fills the interior background, avoiding
+	// the bleed artifact from styled-segment resets).
+	box := renderDialogBox(dialogWidth, lipgloss.Left, content.String())
 
 	return centerInScreen(box, h.width, h.height)
 }

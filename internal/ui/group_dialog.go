@@ -439,9 +439,6 @@ func (g *GroupDialog) View() string {
 
 	// Responsive dialog width
 	dialogWidth := fitDialogWidth(44, 30, g.width)
-	titleWidth := dialogWidth - 4
-
-	titleStyle := DialogTitleStyle.Width(titleWidth)
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment)
 	var hint string
 	switch {
@@ -459,19 +456,19 @@ func (g *GroupDialog) View() string {
 		errContent = errStyle.Render("⚠ " + g.validationErr)
 	}
 
-	dialogContent := lipgloss.JoinVertical(
+	// Build the box with the shared helper: it joins the lines without the
+	// background-bleed padding that lipgloss.JoinVertical injects (see
+	// renderDialogBox) and lets DialogBoxStyle's own centering fill the interior.
+	dialog := renderDialogBox(
+		dialogWidth,
 		lipgloss.Center,
-		titleStyle.Render(title),
+		DialogTitleStyle.Render(title),
 		"",
 		content,
 		errContent,
 		"",
 		hint,
 	)
-
-	dialog := DialogBoxStyle.
-		Width(dialogWidth).
-		Render(dialogContent)
 
 	// Center the dialog
 	return lipgloss.Place(

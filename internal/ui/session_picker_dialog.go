@@ -165,9 +165,7 @@ func (d *SessionPickerDialog) View() string {
 	// Dialog box
 	dialogWidth := fitDialogWidth(44, 30, d.width)
 
-	box := DialogBoxStyle.
-		Width(dialogWidth).
-		Render(content)
+	box := renderDialogBox(dialogWidth, lipgloss.Left, content)
 
 	return centerInScreen(box, d.width, d.height)
 }

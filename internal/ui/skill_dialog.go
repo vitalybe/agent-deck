@@ -544,7 +544,7 @@ func (d *SkillDialog) View() string {
 	parts = append(parts, "", hint)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	dialog := DialogBoxStyle.Width(dialogWidth).Render(content)
+	dialog := renderDialogBox(dialogWidth, lipgloss.Left, content)
 
 	// Match MCP manager behavior: center modal in terminal viewport.
 	if d.width <= 0 || d.height <= 0 {

@@ -291,7 +291,7 @@ func (d *CodeBlockDialog) View() string {
 	}
 	lines = append(lines, fit(footerStyle.Render(footer)))
 
-	box := DialogBoxStyle.Width(dialogWidth).Render(strings.Join(lines, "\n"))
+	box := renderDialogBox(dialogWidth, lipgloss.Left, strings.Join(lines, "\n"))
 	return centerInScreen(box, d.width, d.height)
 }
 

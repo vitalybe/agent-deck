@@ -298,9 +298,7 @@ func (s *SessionSwitcher) View() string {
 
 	content := strings.Join(lines, "\n")
 
-	box := DialogBoxStyle.
-		Width(dialogWidth).
-		Render(content)
+	box := renderDialogBox(dialogWidth, lipgloss.Left, content)
 
 	return centerInScreen(box, s.width, s.height)
 }

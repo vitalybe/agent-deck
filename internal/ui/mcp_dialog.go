@@ -979,7 +979,7 @@ func (m *MCPDialog) View() string {
 
 	dialogContent := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
-	dialog := DialogBoxStyle.Width(dialogWidth).Render(dialogContent)
+	dialog := renderDialogBox(dialogWidth, lipgloss.Left, dialogContent)
 
 	// Center the dialog
 	return lipgloss.Place(
