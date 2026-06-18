@@ -184,9 +184,7 @@ func (z *ZoxidePicker) View() string {
 		hint,
 	)
 
-	dialog := DialogBoxStyle.
-		Width(z.dialogWidth()).
-		Render(content)
+	dialog := renderDialogBox(z.dialogWidth(), lipgloss.Left, content)
 
 	return lipgloss.Place(
 		z.width,
