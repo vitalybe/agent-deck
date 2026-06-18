@@ -34,7 +34,7 @@ func TestIssue1068_RenameAfterCreateTab_AcceptsKeystrokes(t *testing.T) {
 	g.Hide()
 
 	// Step 4: User presses 'r' on a group → ShowRename is called.
-	g.ShowRename("some/group", "old-name")
+	g.ShowRename("some/group", "old-name", "")
 	if !g.IsVisible() {
 		t.Fatal("Rename dialog should be visible after ShowRename")
 	}

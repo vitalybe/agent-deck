@@ -153,14 +153,18 @@ func (g *GroupDialog) ToggleRootSubgroup() {
 	g.validationErr = ""
 }
 
-// ShowRename shows the dialog in rename mode
-func (g *GroupDialog) ShowRename(currentPath, currentName string) {
+// ShowRename shows the dialog in rename mode. currentDefaultPath prefills the
+// editable "Default Path" field with the group's explicitly configured startup
+// folder (empty when none is set) so it can be changed alongside the name.
+func (g *GroupDialog) ShowRename(currentPath, currentName, currentDefaultPath string) {
 	g.visible = true
 	g.mode = GroupDialogRename
 	g.groupPath = currentPath
 	g.validationErr = ""
 	g.nameInput.SetValue(currentName)
 	g.nameInput.CursorEnd() // Issue #604: place cursor at end of pre-filled name.
+	g.pathInput.SetValue(currentDefaultPath)
+	g.pathInput.CursorEnd()
 	// Issue #1068: must reset focusIndex and blur pathInput, otherwise stale
 	// state from a prior Create-dialog Tab routes keys to the invisible path.
 	g.focusName()
@@ -333,7 +337,7 @@ func (g *GroupDialog) Update(msg tea.KeyMsg) (*GroupDialog, tea.Cmd) {
 	// When the Root/Subgroup toggle from #111 is available, Tab still toggles
 	// while focus is on the name field — preserving the existing #111 binding
 	// — and on the path field Tab returns focus to name.
-	if g.mode == GroupDialogCreate {
+	if g.mode == GroupDialogCreate || g.mode == GroupDialogRename {
 		switch msg.String() {
 		case "tab":
 			if g.CanToggle() && g.focusIndex == 0 {
@@ -365,6 +369,15 @@ func (g *GroupDialog) Update(msg tea.KeyMsg) (*GroupDialog, tea.Cmd) {
 	return g, cmd
 }
 
+// nameAndPathFields renders the stacked "Name" + "Default Path" inputs shared by
+// the Create and Edit (rename) modes so both expose the group's startup folder.
+func (g *GroupDialog) nameAndPathFields() string {
+	labelStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+	nameRow := labelStyle.Render("Name:         ") + g.nameInput.View()
+	pathRow := labelStyle.Render("Default Path: ") + g.pathInput.View()
+	return nameRow + "\n" + pathRow
+}
+
 // View renders the dialog
 func (g *GroupDialog) View() string {
 	if !g.visible {
@@ -376,11 +389,8 @@ func (g *GroupDialog) View() string {
 
 	switch g.mode {
 	case GroupDialogCreate:
-		labelStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
 		// Issue #918: show "Name" + optional "Default Path" fields stacked.
-		nameRow := labelStyle.Render("Name:         ") + g.nameInput.View()
-		pathRow := labelStyle.Render("Default Path: ") + g.pathInput.View()
-		fields := nameRow + "\n" + pathRow
+		fields := g.nameAndPathFields()
 
 		if g.parentName != "" {
 			title = "Create Subgroup"
@@ -411,8 +421,10 @@ func (g *GroupDialog) View() string {
 			content = tabs + "\n\n" + content
 		}
 	case GroupDialogRename:
-		title = "Rename Group"
-		content = g.nameInput.View()
+		// Rename exposes both the group name and its editable startup folder,
+		// so the default path can be changed any time (not just at creation).
+		title = "Edit Group"
+		content = g.nameAndPathFields()
 	case GroupDialogMove:
 		title = "Move to Group"
 		var items []string
@@ -444,7 +456,7 @@ func (g *GroupDialog) View() string {
 	switch {
 	case g.mode == GroupDialogCreate && g.CanToggle():
 		hint = hintStyle.Render("Tab toggle/next │ Shift+Tab prev │ Enter confirm │ Esc cancel")
-	case g.mode == GroupDialogCreate:
+	case g.mode == GroupDialogCreate, g.mode == GroupDialogRename:
 		hint = hintStyle.Render("Tab next │ Shift+Tab prev │ Enter confirm │ Esc cancel")
 	default:
 		hint = hintStyle.Render("Enter confirm │ Esc cancel")

@@ -1606,6 +1606,18 @@ func (t *GroupTree) DefaultPathForGroup(groupPath string) string {
 	return resolveGroupDefaultPath(mostRecentPathForSessions(group.Sessions))
 }
 
+// ExplicitDefaultPathForGroup returns the explicitly configured default path for
+// a group (empty when none is set), without the most-recent-session fallback that
+// DefaultPathForGroup applies. Used to prefill the rename dialog with the stored
+// value so the user edits what is actually configured, not a derived path.
+func (t *GroupTree) ExplicitDefaultPathForGroup(groupPath string) string {
+	group, exists := t.Groups[groupPath]
+	if !exists {
+		return ""
+	}
+	return group.DefaultPath
+}
+
 // SetDefaultPathForGroup sets (or clears) an explicit default path for a group.
 func (t *GroupTree) SetDefaultPathForGroup(groupPath, defaultPath string) bool {
 	group, exists := t.Groups[groupPath]

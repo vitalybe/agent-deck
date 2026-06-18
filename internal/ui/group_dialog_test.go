@@ -49,17 +49,39 @@ func TestGroupDialog_ShowRenameSession_CursorAtEnd_Issue604(t *testing.T) {
 	}
 }
 
+// TestGroupDialog_Rename_EditsDefaultPath verifies the Edit (rename) dialog now
+// exposes the group's startup folder: ShowRename prefills the path field, Tab
+// moves focus from name to path, and typing there updates GetDefaultPath().
+func TestGroupDialog_Rename_EditsDefaultPath(t *testing.T) {
+	g := NewGroupDialog()
+	g.ShowRename("Interviews", "Interviews", "/Users/me/interviews")
+
+	if got := g.GetDefaultPath(); got != "/Users/me/interviews" {
+		t.Fatalf("prefilled default path = %q, want %q", got, "/Users/me/interviews")
+	}
+
+	// Tab from name to the path field, then append to the prefilled value.
+	g, _ = g.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if g.focusIndex != 1 {
+		t.Fatalf("after Tab focusIndex = %d, want 1 (path field)", g.focusIndex)
+	}
+	g, _ = g.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if got := g.GetDefaultPath(); got != "/Users/me/interviews2" {
+		t.Errorf("edited default path = %q, want %q", got, "/Users/me/interviews2")
+	}
+}
+
 // TestGroupDialog_ShowRename_CursorAtEnd_Issue604 is the same regression as
 // above but for the group-rename entry point.
 func TestGroupDialog_ShowRename_CursorAtEnd_Issue604(t *testing.T) {
 	g := NewGroupDialog()
 
-	g.ShowRename("/a", "alpha")
+	g.ShowRename("/a", "alpha", "")
 	g.nameInput.SetCursor(2)
 	g.Hide()
 
 	longName := "some-much-longer-group-name"
-	g.ShowRename("/b", longName)
+	g.ShowRename("/b", longName, "")
 
 	if pos := g.nameInput.Position(); pos != len(longName) {
 		t.Errorf("second ShowRename: cursor = %d, want %d (end of %q)",
