@@ -10587,13 +10587,19 @@ func (h *Home) openQuickEditor(initial string) tea.Cmd {
 			uiLog.Warn("quick_editor_read_failed", slog.String("error", readErr.Error()))
 			return quickEditorDoneMsg{err: readErr}
 		}
-		text := collapsePromptBuffer(string(data))
+		// The dialog input is multiline, so preserve the editor's line breaks;
+		// just trim trailing blank lines. Collapsing happens at submit time.
+		text := strings.TrimRight(string(data), " \t\r\n")
 		uiLog.Debug("quick_editor_done", slog.Int("chars", len(text)))
 		return quickEditorDoneMsg{text: text}
 	})
 }
 
 // handleQuickDialogKey processes keys while the Quick Session dialog is visible.
+// The prompt is a multiline textarea: Enter on a line with text inserts a
+// newline, but Enter on an empty line submits (a trailing blank line means
+// "go"). Ctrl+S always submits; Tab toggles the worktree checkbox; Ctrl+G
+// composes in $EDITOR.
 func (h *Home) handleQuickDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -10604,19 +10610,33 @@ func (h *Home) handleQuickDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 	case "ctrl+g":
 		return h, h.openQuickEditor(h.quickDialog.Prompt())
+	case "ctrl+s":
+		return h.submitQuickSession()
 	case "enter":
-		prompt := h.quickDialog.Prompt()
-		if prompt == "" {
-			return h, nil
+		// Enter on an empty line submits; otherwise insert a newline.
+		if h.quickDialog.CurrentLineEmpty() {
+			return h.submitQuickSession()
 		}
-		worktree := h.quickDialog.WorktreeEnabled()
-		groupPath := h.quickDialog.GroupPath()
-		h.quickDialog.Hide()
-		h.clearError()
-		return h, h.quickSessionCreate(prompt, worktree, groupPath)
+		return h, h.quickDialog.UpdateInput(msg)
 	default:
 		return h, h.quickDialog.UpdateInput(msg)
 	}
+}
+
+// submitQuickSession collapses the multiline prompt to a single line and kicks
+// off session creation. The slug derivation and the agent's first message both
+// want one line (tmux send-keys -l turns embedded newlines into premature
+// Enters). Mirrors ag.sh. A blank prompt is a no-op (dialog stays open).
+func (h *Home) submitQuickSession() (tea.Model, tea.Cmd) {
+	prompt := collapsePromptBuffer(h.quickDialog.Prompt())
+	if prompt == "" {
+		return h, nil
+	}
+	worktree := h.quickDialog.WorktreeEnabled()
+	groupPath := h.quickDialog.GroupPath()
+	h.quickDialog.Hide()
+	h.clearError()
+	return h, h.quickSessionCreate(prompt, worktree, groupPath)
 }
 
 // quickSessionCreate derives a slug from the prompt (ag-style), optionally
