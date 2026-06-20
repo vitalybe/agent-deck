@@ -10,7 +10,7 @@ import (
 const (
 	hotkeyQuit             = "quit"
 	hotkeyNewSession       = "new_session"
-	hotkeyQuickCreate      = "quick_create"
+	hotkeyQuickSession     = "quick_session"
 	hotkeyRename           = "rename"
 	hotkeyRestart          = "restart"
 	hotkeyRestartFresh     = "restart_fresh"
@@ -62,7 +62,7 @@ const (
 var hotkeyActionOrder = []string{
 	hotkeyQuit,
 	hotkeyNewSession,
-	hotkeyQuickCreate,
+	hotkeyQuickSession,
 	hotkeyRename,
 	hotkeyRestart,
 	hotkeyRestartFresh,
@@ -105,8 +105,8 @@ var hotkeyActionOrder = []string{
 
 var defaultHotkeyBindings = map[string]string{
 	hotkeyQuit:             "q",
-	hotkeyNewSession:       "n",
-	hotkeyQuickCreate:      "N",
+	hotkeyNewSession:       "N",
+	hotkeyQuickSession:     "n",
 	hotkeyRename:           "r",
 	hotkeyRestart:          "R",
 	hotkeyRestartFresh:     "T",
@@ -149,6 +149,7 @@ var defaultHotkeyBindings = map[string]string{
 
 var hotkeyActionDefaultTriggers = map[string][]string{
 	hotkeyQuit:            {"q", "ctrl+c"},
+	hotkeyNewSession:      {"N", "shift+n"},
 	hotkeyForkWithOptions: {"F", "shift+f"},
 	hotkeyMoveToGroup:     {"M", "shift+m"},
 	hotkeyWorktreeFinish:  {"W", "shift+w"},
@@ -158,6 +159,10 @@ var hotkeyActionDefaultTriggers = map[string][]string{
 // renamedHotkeys maps old action names to new names for backward compatibility.
 var renamedHotkeys = map[string]string{
 	"toggle_gemini_yolo": hotkeyToggleYolo,
+	// quick_create (instant auto-named session) was replaced by quick_session
+	// (the ag-style prompt dialog). Map the old action so an existing user
+	// override keeps resolving to the new quick-session flow.
+	"quick_create": hotkeyQuickSession,
 }
 
 // defaultDisabledHotkeys are actions that keep a canonical key in

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Quick Session (`n`): an ag-style prompt-first session launcher.** Pressing `n` opens a multiline text input — type a task and press `Enter` on a blank line (or `Ctrl+S`) to create; `Enter` on a line with text inserts a newline. The session name (and worktree branch, when enabled) is derived from the prompt the same way the `ag` script does (a short prompt is slugified directly; a longer one is summarized via a model CLI (`aichat`, falling back to the local `ail` model, then to a local slug)), and the prompt is collapsed to a single line and delivered to the agent as its first message. Toggle **Use Worktree** with `Tab`, and press `Ctrl+G` to compose the prompt in `$EDITOR`. The session launches with your configured default tool.
+
+### Changed
+
+- **Session-creation hotkeys swapped.** `n` now opens the new **Quick Session** dialog (above); the full **New Session** dialog moved to `N`. The previous `N` instant quick-create (auto-named session, no dialog) has been removed. An existing `[hotkeys].quick_create` override is remapped to the new `quick_session` action for backward compatibility.
+
 ## [1.9.74] - 2026-06-22
 
 ### Fixed

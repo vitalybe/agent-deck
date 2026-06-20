@@ -19,7 +19,8 @@ Complete reference for agent-deck Terminal UI features.
 | Key | Action |
 |-----|--------|
 | `Enter` | Attach to session OR toggle group |
-| `n` | New session (inherits current group) |
+| `n` | Quick session: prompt-first launcher (slug-named, optional worktree, prompt sent to agent) |
+| `N` | New session (full dialog, inherits current group) |
 | `r` | Rename session or group |
 | `R` | Restart session (reloads MCPs) |
 | `+` / `K` / `Shift+↑` | Move item up (auto-promotes a sub-session to top-level when at the parent's first child) |
@@ -79,7 +80,18 @@ Complete reference for agent-deck Terminal UI features.
 
 ## Dialogs
 
-### New Session (`n`)
+### Quick Session (`n`)
+
+An ag-style prompt-first launcher: a multiline text input plus a **Use Worktree** checkbox.
+
+- Type a task prompt (multiline). `Enter` inserts a newline, except on a blank line where it submits (a trailing blank line means "go"); `Ctrl+S` always submits. The session name (and worktree branch, when enabled) is derived from the prompt — a short prompt is slugified directly; a longer one is summarized via a model CLI (`aichat`, falling back to the local `ail` model, then to a local slug). The prompt is collapsed to a single line and delivered to the agent as its first message.
+- The session launches with your configured default tool.
+
+**Controls:** `Enter` newline (blank line submits) | `Ctrl+S` create | `Tab` toggle Use Worktree | `Ctrl+G` compose the prompt in `$EDITOR` | `Esc` cancel
+
+On a remote group/session, `n` routes to the remote-aware New Session dialog (quick sessions are local-only).
+
+### New Session (`N`)
 
 **Fields (order: Name → Tool → Path):**
 - Session name (required)
@@ -92,7 +104,7 @@ Complete reference for agent-deck Terminal UI features.
 
 Enter-advances is the default (`[ui].new_session_enter_advances = true`), so typing a name and pressing Enter no longer silently creates a session with all defaults. Set `[ui].new_session_enter_advances = false` to restore the legacy Enter-submits behavior; `Ctrl+S` submits in both modes.
 
-Pressing `n` on a remote group/session opens a remote-aware dialog (remote paths and group pre-filled); the session is created over SSH on the remote, never on localhost.
+Pressing `N` (or `n`) on a remote group/session opens a remote-aware dialog (remote paths and group pre-filled); the session is created over SSH on the remote, never on localhost.
 
 Claude New Session defaults are remembered in `~/.agent-deck/config.toml` under `[claude]`, except start query and resume IDs, which are per-launch values.
 
