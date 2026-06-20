@@ -33,14 +33,12 @@ func TestSlugFromPrompt_ShortPromptSlugifiesDirectly(t *testing.T) {
 	}
 }
 
-func TestSlugFromPrompt_LongPromptFallsBackWithoutModel(t *testing.T) {
-	// A >5-word prompt would normally summarize via aichat; force the
-	// fallback path by pointing AG_MODEL at a name that cannot resolve and
-	// relying on summarizeSlug returning "" when aichat is absent/errors.
-	t.Setenv("AG_MODEL", "definitely-not-a-real-model")
+func TestSlugFromPrompt_LongPromptProducesValidSlug(t *testing.T) {
+	// A >5-word prompt is summarized via the local `ail` CLI when available,
+	// otherwise it falls back to the first-words slug. Either way the result
+	// must be a non-empty, valid slug — this test is robust whether or not
+	// `ail` is installed in the test environment.
 	got := slugFromPrompt("add a brand new dashboard widget to the settings page please")
-	// Whatever happens, the result must be a non-empty, valid slug derived
-	// from the prompt (first-words fallback when aichat yields nothing).
 	if got == "" {
 		t.Fatal("slugFromPrompt returned empty for a long prompt")
 	}

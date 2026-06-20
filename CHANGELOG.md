@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Quick Session (`n`): an ag-style prompt-first session launcher.** Pressing `n` opens a single text input — type a task and press Enter. The session name (and worktree branch, when enabled) is derived from the prompt the same way the `ag` script does (a short prompt is slugified directly; a longer one is summarized via `aichat` when available, falling back to a local slug), and the prompt is delivered to the agent as its first message. Toggle **Use Worktree** with `Tab`, and press `Ctrl+G` to compose the prompt in `$EDITOR`. The session launches with your configured default tool.
+- **Quick Session (`n`): an ag-style prompt-first session launcher.** Pressing `n` opens a single text input — type a task and press Enter. The session name (and worktree branch, when enabled) is derived from the prompt the same way the `ag` script does (a short prompt is slugified directly; a longer one is summarized via the local `ail` CLI when available, falling back to a local slug), and the prompt is delivered to the agent as its first message. Toggle **Use Worktree** with `Tab`, and press `Ctrl+G` to compose the prompt in `$EDITOR`. The session launches with your configured default tool.
 
 ### Changed
 

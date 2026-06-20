@@ -3,24 +3,19 @@ package ui
 import (
 	"bytes"
 	"context"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
 )
 
-// Slug derivation for the Quick Session flow, ported from the `ag` shell
-// script (~/hq/scripts/ag/ag.sh). A short prompt is slugified directly; a
-// longer one is summarized into a 2-4 word kebab slug by a fast model via
-// `aichat`. Every path degrades to a local slugify so the flow never blocks
-// on (or requires) an external model.
+// Slug derivation for the Quick Session flow, modeled on the `ag` shell script
+// (~/hq/scripts/ag/ag.sh). A short prompt is slugified directly; a longer one
+// is summarized into a 2-3 word kebab slug by the local `ail` CLI. Every path
+// degrades to a local slugify so the flow never blocks on (or requires) the
+// external tool.
 
-// quickSlugModel is the fast model used to summarize prompts into a slug.
-// Mirrors ag.sh's AG_MODEL default and honors the same env override.
-const quickSlugDefaultModel = "openrouter:openai/gpt-4.1-nano"
-
-// quickSlugTimeout bounds the aichat call so a slow/hung model can never wedge
+// quickSlugTimeout bounds the ail call so a slow/hung model can never wedge
 // session creation; on timeout we fall back to the local slugify.
 const quickSlugTimeout = 10 * time.Second
 
@@ -67,30 +62,21 @@ func slugFromPrompt(prompt string) string {
 	return slug
 }
 
-// quickSlugModelName returns the model id used for summarization, honoring the
-// AG_MODEL env override and falling back to the ag.sh default.
-func quickSlugModelName() string {
-	if m := strings.TrimSpace(os.Getenv("AG_MODEL")); m != "" {
-		return m
-	}
-	return quickSlugDefaultModel
-}
-
-// summarizeSlug asks the fast model for a 2-4 word kebab-case summary of the
-// prompt, returning a slugified result. Any error (aichat missing from PATH,
-// timeout, non-zero exit) yields "" so callers fall back to local slugify.
+// summarizeSlug asks the local `ail` CLI for a 2-3 word kebab-case summary of
+// the prompt, returning a slugified result. ail takes the full instruction as a
+// single positional argument and prints the slug on stdout (it may wrap it in
+// quotes, which slugify strips). Any error (ail missing from PATH, timeout,
+// non-zero exit) yields "" so callers fall back to local slugify.
 func summarizeSlug(prompt string) string {
-	if _, err := exec.LookPath("aichat"); err != nil {
+	if _, err := exec.LookPath("ail"); err != nil {
 		return ""
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), quickSlugTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "aichat", "-m", quickSlugModelName(), "-S",
-		"--prompt", "Summarize this task as a 2-4 word slug for a branch/session name. "+
-			"Reply with ONLY the slug in lowercase-kebab-case, no quotes, no other text.")
-	cmd.Stdin = strings.NewReader(prompt)
+	instruction := `make slug name 2-3 words, e.g. this-is-example - for the following text: "` + prompt + `"`
+	cmd := exec.CommandContext(ctx, "ail", instruction)
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
