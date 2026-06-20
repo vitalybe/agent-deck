@@ -8758,7 +8758,11 @@ func (h *Home) confirmAction() tea.Cmd {
 		h.instances = h.groupTree.GetAllInstances()
 		h.instancesMu.Unlock()
 		h.rebuildFlatItems()
-		h.saveInstances()
+		// Use forceSave to bypass the isReloading/mtime guards: a non-force
+		// save can be skipped or aborted into a reload, which restores the
+		// just-deleted group from stale disk state (the user sees nothing
+		// happen). Delete MUST persist, mirroring session deletion.
+		h.forceSaveInstances()
 	case ConfirmDeleteRemoteSession:
 		sessionID := h.confirmDialog.GetTargetID()
 		remoteName := h.confirmDialog.GetRemoteName()
