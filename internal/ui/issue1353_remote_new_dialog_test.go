@@ -22,8 +22,10 @@ import (
 // preserves the #743 invariant that the session must NOT be created on
 // localhost.
 //
-// `N` (quick create) on a remote is intentionally unchanged: it still
-// quick-creates on the remote without a dialog.
+// Note: the keys swapped — `n` now opens the ag-style Quick Session dialog and
+// `N` opens this full new-session dialog. On a remote item BOTH defer to the
+// remote new-session dialog (quick sessions are local-only), so the #1353 +
+// #743 contract here is exercised via `n` and still holds.
 
 func remoteGroupItem(name string) session.Item {
 	return session.Item{Type: session.ItemTypeRemoteGroup, RemoteName: name, Path: "remotes/" + name}
@@ -178,9 +180,11 @@ func TestIssue1353_SubmitRoutesToRemote(t *testing.T) {
 	}
 }
 
-// TestIssue1353_LocalNUnaffected: `n` on a local group keeps the existing
-// behavior and must not leave any stale remote target around.
-func TestIssue1353_LocalNUnaffected(t *testing.T) {
+// TestIssue1353_LocalNOpensQuickDialog: `n` on a local group now opens the
+// ag-style Quick Session dialog (the full new-session dialog moved to `N`). The
+// remote new-session contract above still applies to remote items, which `n`
+// routes to the new-session dialog with the remote target recorded.
+func TestIssue1353_LocalNOpensQuickDialog(t *testing.T) {
 	setXDGTestHome(t)
 	home := NewHome()
 	home.width = 100
@@ -191,14 +195,15 @@ func TestIssue1353_LocalNUnaffected(t *testing.T) {
 		Path:  "proj",
 	}}
 	home.cursor = 0
-	// Simulate a previous remote flow that was abandoned without Esc.
-	home.pendingRemoteName = "stale-remote"
 
 	h := pressN(t, home)
-	if !h.newDialog.IsVisible() {
-		t.Fatal("n on a local group must open the dialog")
+	if !h.quickDialog.IsVisible() {
+		t.Fatal("n on a local group must open the Quick Session dialog")
 	}
-	if h.pendingRemoteName != "" {
-		t.Fatalf("n on a local group must clear pendingRemoteName, got %q", h.pendingRemoteName)
+	if h.newDialog.IsVisible() {
+		t.Fatal("n on a local group must NOT open the full new-session dialog (that is N)")
+	}
+	if got := h.quickDialog.GroupPath(); got != "proj" {
+		t.Fatalf("quick dialog group = %q, want proj", got)
 	}
 }

@@ -230,6 +230,7 @@ type Home struct {
 	globalSearch         *GlobalSearch              // Global session search across all Claude conversations
 	globalSearchIndex    *session.GlobalSearchIndex // Search index (nil if disabled)
 	newDialog            *NewDialog
+	quickDialog          *QuickDialog          // Ag-style quick session prompt (hotkey n)
 	pendingRemoteName    string                // #1353: remote target for the open new-session dialog ("" = local)
 	groupDialog          *GroupDialog          // For creating/renaming groups
 	forkDialog           *ForkDialog           // For forking sessions
@@ -1098,6 +1099,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		storageWarning:            storageWarning,
 		search:                    NewSearch(),
 		newDialog:                 NewNewDialog(),
+		quickDialog:               NewQuickDialog(),
 		groupDialog:               NewGroupDialog(),
 		forkDialog:                NewForkDialog(),
 		confirmDialog:             NewConfirmDialog(),
@@ -5361,6 +5363,18 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case quickEditorDoneMsg:
+		// Ctrl+G editor returned: fold the composed text back into the Quick
+		// Session dialog (if still open). Editor failures surface as a banner.
+		if msg.err != nil {
+			h.setError(fmt.Errorf("editor: %w", msg.err))
+			return h, nil
+		}
+		if h.quickDialog.IsVisible() {
+			h.quickDialog.SetPrompt(msg.text)
+		}
+		return h, nil
+
 	case promptSubmitMsg:
 		// #1410: deliver a one-line prompt to the highlighted session without
 		// attaching, reusing the prompt-state-aware send path (the #1409/#1432
@@ -6223,6 +6237,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h.newDialog.IsVisible() {
 			return h.handleNewDialogKey(msg)
 		}
+		if h.quickDialog.IsVisible() {
+			return h.handleQuickDialogKey(msg)
+		}
 		if h.groupDialog.IsVisible() {
 			return h.handleGroupDialogKey(msg)
 		}
@@ -6696,6 +6713,7 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			parentProjectPath,
 			tempID,
 			false, // not auto-named — user went through the full create dialog
+			"",    // no initial message (full new-session dialog)
 		)
 
 	case msg.String() == "esc":
@@ -7921,7 +7939,9 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
-	case "n":
+	case "N":
+		// Full New Session dialog (moved from `n`; `n` now opens the ag-style
+		// Quick Session prompt below).
 		// Reset any stale remote target from a previously abandoned flow.
 		h.pendingRemoteName = ""
 		// If the cursor is on a remote group/session, open the same
@@ -8034,16 +8054,23 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		h.newDialog.ShowInGroup(groupPath, groupName, defaultPath, conductors, suggestedParentID)
 		return h, nil
 
-	case "N":
-		// Check if cursor is on a remote group/session — create on remote instead
+	case "n":
+		// Ag-style Quick Session: a single task prompt + an optional worktree.
+		// On a remote group/session, defer to the full remote new-session dialog
+		// — quick session is local-only, so this preserves the #743 invariant
+		// (never create on localhost when a remote is targeted).
 		if h.cursor >= 0 && h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeRemoteGroup || item.Type == session.ItemTypeRemoteSession {
-				return h, h.createRemoteSession(item.RemoteName)
+				h.pendingRemoteName = ""
+				h.showRemoteNewSessionDialog(item)
+				return h, nil
 			}
 		}
-		// Quick create: auto-generated name, smart defaults from group context
-		return h, h.quickCreateSession()
+		groupPath, groupName := h.quickSessionGroupContext()
+		h.quickDialog.SetSize(h.width, h.height)
+		h.quickDialog.Show(groupPath, groupName)
+		return h, nil
 
 	case "z":
 		h.zoxidePicker.SetSize(h.width, h.height)
@@ -8775,6 +8802,7 @@ func (h *Home) confirmCreateDirectory() tea.Cmd {
 		parentProjectPath,
 		"",    // no placeholder — non-worktree sessions are fast
 		false, // not auto-named
+		"",    // no initial message
 	)
 }
 
@@ -10045,6 +10073,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 	parentSessionID, parentProjectPath string,
 	tempID string,
 	autoName bool,
+	initialMessage string,
 ) tea.Cmd {
 	return func() tea.Msg {
 		uiLog.Info("create_session_start",
@@ -10230,9 +10259,18 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			slog.String("path", inst.ProjectPath),
 			slog.Bool("sandbox", inst.IsSandboxed()),
 		)
-		if err := inst.Start(); err != nil {
-			uiLog.Error("session_create_failed", slog.String("error", err.Error()))
-			return sessionCreatedMsg{err: err, tempID: tempID}
+		// Quick Session (ag-style) delivers the prompt as the agent's first
+		// message via the tool-agnostic wait-for-ready-then-send path (the same
+		// one `agent-deck launch -m` uses). All other flows start silently.
+		var startErr error
+		if initialMessage != "" {
+			startErr = inst.StartWithMessage(initialMessage)
+		} else {
+			startErr = inst.Start()
+		}
+		if startErr != nil {
+			uiLog.Error("session_create_failed", slog.String("error", startErr.Error()))
+			return sessionCreatedMsg{err: startErr, tempID: tempID}
 		}
 		uiLog.Info("session_create_succeeded", slog.String("id", inst.ID))
 		return sessionCreatedMsg{instance: inst, tempID: tempID}
@@ -10444,121 +10482,223 @@ func (h *Home) quickForkSession(source *session.Instance) tea.Cmd {
 	return result.cmd
 }
 
-// quickCreateSession creates a session instantly with auto-generated name and smart defaults.
-// When the cursor is on a session, it inherits that session's path and tool settings
-// (duplicate-like behavior per community feedback). When on a group header, it uses
-// the group's default path and most recently created session's settings.
-func (h *Home) quickCreateSession() tea.Cmd {
-	groupPath := ""
-	var sourceSession *session.Instance
-
-	// Determine context from cursor position
+// quickSessionGroupContext resolves the parent group (path + display name) for
+// a new session from the current cursor position, falling back to the active
+// group scope and then the default group. Backs the Quick Session dialog.
+func (h *Home) quickSessionGroupContext() (groupPath, groupName string) {
+	groupPath = session.DefaultGroupPath
+	groupName = session.DefaultGroupName
+	if h.groupScope != "" {
+		groupPath = h.groupScope
+		if group, exists := h.groupTree.Groups[h.groupScope]; exists {
+			groupName = group.Name
+		}
+	}
 	if h.cursor >= 0 && h.cursor < len(h.flatItems) {
 		item := h.flatItems[h.cursor]
-		if item.Type == session.ItemTypeSession && item.Session != nil {
-			sourceSession = item.Session
-			groupPath = item.Session.GroupPath
-		} else if item.Type == session.ItemTypeGroup && item.Group != nil {
-			groupPath = item.Group.Path
-		}
-	}
-	if groupPath == "" {
-		if h.groupScope != "" {
-			groupPath = h.groupScope
-		} else {
-			groupPath = session.DefaultGroupPath
-		}
-	}
-
-	projectPath := ""
-	tool := ""
-	command := ""
-	var toolOptionsJSON json.RawMessage
-	geminiYoloMode := false
-
-	if sourceSession != nil {
-		// Cursor on a session: inherit from THAT session (duplicate-like)
-		projectPath = sourceSession.ProjectPath
-		tool = sourceSession.Tool
-		command = sourceSession.Command
-		if len(sourceSession.ToolOptionsJSON) > 0 {
-			toolOptionsJSON = session.StripResumeFields(sourceSession.ToolOptionsJSON)
-		}
-		if sourceSession.GeminiYoloMode != nil && *sourceSession.GeminiYoloMode {
-			geminiYoloMode = true
-		}
-	} else {
-		// Cursor on a group header: use group defaults + most recent session
-		projectPath = h.getDefaultPathForGroup(groupPath)
-		if projectPath == "" {
-			projectPath = h.mostRecentPathInGroup(groupPath)
-		}
-
-		h.instancesMu.RLock()
-		var mostRecent *session.Instance
-		for _, inst := range h.instances {
-			if inst.GroupPath == groupPath {
-				if mostRecent == nil || inst.CreatedAt.After(mostRecent.CreatedAt) {
-					mostRecent = inst
-				}
+		switch item.Type {
+		case session.ItemTypeGroup:
+			if item.Group != nil {
+				groupPath = item.Group.Path
+				groupName = item.Group.Name
+			}
+		case session.ItemTypeSession:
+			groupPath = item.Path
+			if group, exists := h.groupTree.Groups[groupPath]; exists {
+				groupName = group.Name
 			}
 		}
-		if mostRecent != nil {
-			tool = mostRecent.Tool
-			command = mostRecent.Command
-			if len(mostRecent.ToolOptionsJSON) > 0 {
-				toolOptionsJSON = session.StripResumeFields(mostRecent.ToolOptionsJSON)
-			}
-			if mostRecent.GeminiYoloMode != nil && *mostRecent.GeminiYoloMode {
-				geminiYoloMode = true
-			}
-		}
-		h.instancesMu.RUnlock()
 	}
+	return groupPath, groupName
+}
 
-	// Fallback for path
+// quickEditorDoneMsg carries the text composed in $EDITOR back into the Quick
+// Session dialog after the Ctrl+G suspend returns.
+type quickEditorDoneMsg struct {
+	text string
+	err  error
+}
+
+// resolveQuickEditor returns the editor command for Ctrl+G, preferring $VISUAL,
+// then $EDITOR, then vi.
+func resolveQuickEditor() string {
+	if e := strings.TrimSpace(os.Getenv("VISUAL")); e != "" {
+		return e
+	}
+	if e := strings.TrimSpace(os.Getenv("EDITOR")); e != "" {
+		return e
+	}
+	return "vi"
+}
+
+// collapsePromptBuffer normalizes editor output the way ag.sh does: trim each
+// line, drop blank lines, and join into a single line.
+func collapsePromptBuffer(s string) string {
+	var parts []string
+	for _, line := range strings.Split(s, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// openQuickEditor suspends the TUI, opens $EDITOR seeded with the current prompt
+// buffer, and returns the edited (collapsed) text via quickEditorDoneMsg.
+func (h *Home) openQuickEditor(initial string) tea.Cmd {
+	tmp, err := os.CreateTemp("", "agent-deck-quick-*.md")
+	if err != nil {
+		return func() tea.Msg { return quickEditorDoneMsg{err: err} }
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.WriteString(initial); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return func() tea.Msg { return quickEditorDoneMsg{err: err} }
+	}
+	tmp.Close()
+
+	// Split the editor string so values carrying flags (e.g. "code -w") work.
+	fields := strings.Fields(resolveQuickEditor())
+	if len(fields) == 0 {
+		os.Remove(tmpPath)
+		return func() tea.Msg { return quickEditorDoneMsg{err: fmt.Errorf("no editor configured")} }
+	}
+	args := append(fields[1:], tmpPath)
+	cmd := exec.Command(fields[0], args...)
+	return tea.ExecProcess(cmd, func(execErr error) tea.Msg {
+		defer os.Remove(tmpPath)
+		if execErr != nil {
+			return quickEditorDoneMsg{err: execErr}
+		}
+		data, readErr := os.ReadFile(tmpPath)
+		if readErr != nil {
+			return quickEditorDoneMsg{err: readErr}
+		}
+		return quickEditorDoneMsg{text: collapsePromptBuffer(string(data))}
+	})
+}
+
+// handleQuickDialogKey processes keys while the Quick Session dialog is visible.
+func (h *Home) handleQuickDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		h.quickDialog.Hide()
+		return h, nil
+	case "tab":
+		h.quickDialog.ToggleWorktree()
+		return h, nil
+	case "ctrl+g":
+		return h, h.openQuickEditor(h.quickDialog.Prompt())
+	case "enter":
+		prompt := h.quickDialog.Prompt()
+		if prompt == "" {
+			return h, nil
+		}
+		worktree := h.quickDialog.WorktreeEnabled()
+		groupPath := h.quickDialog.GroupPath()
+		h.quickDialog.Hide()
+		h.clearError()
+		return h, h.quickSessionCreate(prompt, worktree, groupPath)
+	default:
+		return h, h.quickDialog.UpdateInput(msg)
+	}
+}
+
+// quickSessionCreate derives a slug from the prompt (ag-style), optionally
+// resolves a worktree target named after the slug, then creates and starts the
+// session with the prompt delivered as the agent's first message. Slug
+// summarization (aichat) and worktree creation can take a moment, so it all runs
+// off the UI thread inside the returned command.
+func (h *Home) quickSessionCreate(prompt string, worktree bool, groupPath string) tea.Cmd {
+	// Resolve project path + tool on the UI goroutine (cheap config/cursor reads).
+	projectPath := h.getDefaultPathForGroup(groupPath)
 	if projectPath == "" {
-		var err error
-		projectPath, err = os.Getwd()
-		if err != nil {
-			return func() tea.Msg {
-				return sessionCreatedMsg{err: fmt.Errorf("cannot determine project path: %w", err)}
-			}
+		if cwd, err := os.Getwd(); err == nil {
+			projectPath = cwd
 		}
 	}
-
-	// Fallback for tool
-	if tool == "" {
-		tool = session.GetDefaultTool()
-	}
+	tool := session.GetDefaultTool()
 	if tool == "" {
 		tool = "claude"
 	}
-	if command == "" && tool != "shell" {
-		if tool == "cursor" {
-			command = "cursor agent"
-		} else {
-			command = tool
+	command := tool
+	switch tool {
+	case "shell":
+		command = ""
+	case "cursor":
+		command = "cursor agent"
+	}
+
+	// Snapshot instances for slug de-duplication so the async closure never
+	// touches h.instances directly.
+	h.instancesMu.RLock()
+	instSnapshot := make([]*session.Instance, len(h.instances))
+	copy(instSnapshot, h.instances)
+	h.instancesMu.RUnlock()
+
+	// Show an immediate placeholder while the slug is derived (aichat can take a
+	// moment) and the agent starts + receives the prompt. The provisional title
+	// uses a local slug so it appears instantly; the real session replaces it on
+	// sessionCreatedMsg (which clears the placeholder by tempID).
+	tempID := session.GenerateID()
+	provisional := firstWordsSlug(prompt, 6)
+	if provisional == "" {
+		provisional = "quick-session"
+	}
+	h.creatingSessions[tempID] = &CreatingSession{
+		ID:        tempID,
+		Title:     provisional,
+		Tool:      command,
+		GroupPath: groupPath,
+		StartTime: time.Now(),
+	}
+	h.rebuildFlatItems()
+	for i, item := range h.flatItems {
+		if item.CreatingID == tempID {
+			h.cursor = i
+			h.syncViewport()
+			break
 		}
 	}
 
-	// Generate unique name
-	h.instancesMu.RLock()
-	name := session.GenerateUniqueSessionName(h.instances, groupPath)
-	h.instancesMu.RUnlock()
+	return func() tea.Msg {
+		slug := slugFromPrompt(prompt)
+		if slug == "" {
+			slug = session.GenerateSessionName()
+		}
+		slug = ensureUniqueSessionTitle(slug, instSnapshot)
 
-	return h.createSessionInGroupWithWorktreeAndOptions(
-		name, projectPath, command, groupPath,
-		"", "", "", // no worktree
-		geminiYoloMode, false, toolOptionsJSON,
-		nil,        // no extra claude args (recent-session path)
-		"",         // no claude startup query (recent-session path)
-		"",         // no explicit model override
-		false, nil, // no multi-repo
-		"", "", // no parent
-		"",   // no placeholder
-		true, // quick-create → auto-named handle
-	)
+		var worktreePath, worktreeRepoRoot, branch string
+		if worktree {
+			branch = git.SanitizeBranchName(slug)
+			wtPath, repoRoot, fallback, errMsg := resolveWorktreeTarget(projectPath, branch, true)
+			if errMsg != "" {
+				return sessionCreatedMsg{err: fmt.Errorf("%s", errMsg)}
+			}
+			if fallback {
+				branch = ""
+			} else {
+				worktreePath = wtPath
+				worktreeRepoRoot = repoRoot
+			}
+		}
+
+		create := h.createSessionInGroupWithWorktreeAndOptions(
+			slug, projectPath, command, groupPath,
+			worktreePath, worktreeRepoRoot, branch,
+			false, false, nil, // no gemini yolo, no sandbox, no tool options
+			nil,        // no claude extra args
+			"",         // no claude startup query (prompt is delivered via initialMessage)
+			"",         // no explicit model override
+			false, nil, // no multi-repo
+			"", "", // no parent
+			tempID, // placeholder shown above is cleared on sessionCreatedMsg
+			false,  // slug is meaningful, not an auto-named handle
+			prompt, // initial message delivered to the agent once ready
+		)
+		return create()
+	}
 }
 
 // deriveSessionNameFromPath returns the trailing directory of projectPath as a
@@ -10641,6 +10781,7 @@ func (h *Home) quickCreateSessionAt(projectPath string) tea.Cmd {
 		"", "",
 		"",
 		true, // quick-create → auto-named handle
+		"",   // no initial message
 	)
 }
 
@@ -10687,26 +10828,6 @@ func (h *Home) activeConductorSessions() []*session.Instance {
 		}
 	}
 	return out
-}
-
-// mostRecentPathInGroup returns the project path of the most recently created
-// session in the given group, or empty string if no sessions exist.
-func (h *Home) mostRecentPathInGroup(groupPath string) string {
-	h.instancesMu.RLock()
-	defer h.instancesMu.RUnlock()
-
-	var mostRecent *session.Instance
-	for _, inst := range h.instances {
-		if inst.GroupPath == groupPath && inst.ProjectPath != "" {
-			if mostRecent == nil || inst.CreatedAt.After(mostRecent.CreatedAt) {
-				mostRecent = inst
-			}
-		}
-	}
-	if mostRecent != nil {
-		return mostRecent.ProjectPath
-	}
-	return ""
 }
 
 // forkSessionWithDialog opens the fork dialog to customize title and group
@@ -12251,6 +12372,7 @@ func (h *Home) renderFilterBar() string {
 func (h *Home) updateSizes() {
 	h.search.SetSize(h.width, h.height)
 	h.newDialog.SetSize(h.width, h.height)
+	h.quickDialog.SetSize(h.width, h.height)
 	h.groupDialog.SetSize(h.width, h.height)
 	h.confirmDialog.SetSize(h.width, h.height)
 	h.geminiModelDialog.SetSize(h.width, h.height)
@@ -12339,6 +12461,9 @@ func (h *Home) View() string {
 	}
 	if h.newDialog.IsVisible() {
 		return h.newDialog.View()
+	}
+	if h.quickDialog.IsVisible() {
+		return h.quickDialog.View()
 	}
 	if h.groupDialog.IsVisible() {
 		return h.groupDialog.View()
@@ -13537,7 +13662,7 @@ func (h *Home) renderHelpBarMinimal() string {
 	// Context-specific keys (left side)
 	var contextKeys string
 	newKey := h.actionKey(hotkeyNewSession)
-	quickKey := h.actionKey(hotkeyQuickCreate)
+	quickKey := h.actionKey(hotkeyQuickSession)
 	importKey := h.actionKey(hotkeyImport)
 	groupKey := h.actionKey(hotkeyCreateGroup)
 	restartKey := h.actionKey(hotkeyRestart)
@@ -13640,7 +13765,7 @@ func (h *Home) renderHelpBarCompact() string {
 
 	sepStyle := lipgloss.NewStyle().Foreground(ColorBorder)
 	sep := sepStyle.Render(" │ ")
-	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate))
+	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickSession))
 	restartFreshKey := h.actionKey(hotkeyRestartFresh)
 
 	// Abbreviated key+short desc
@@ -13778,7 +13903,7 @@ func (h *Home) renderHelpBarFull() string {
 	// Separator style for grouping related actions
 	sepStyle := lipgloss.NewStyle().Foreground(ColorBorder)
 	sep := sepStyle.Render(" │ ")
-	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate))
+	newQuickKey := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickSession))
 	renameKey := h.actionKey(hotkeyRename)
 	restartKey := h.actionKey(hotkeyRestart)
 	restartFreshKey := h.actionKey(hotkeyRestartFresh)
@@ -14081,7 +14206,7 @@ func (h *Home) curatedContextHints(item session.Item) []footerHint {
 		}
 	}
 
-	newQuick := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate))
+	newQuick := joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickSession))
 
 	switch item.Type {
 	case session.ItemTypeGroup:
@@ -14187,7 +14312,7 @@ func (h *Home) renderHelpBarCurated() string {
 				contextHints = append(contextHints, footerHint{key: key, label: label})
 			}
 		}
-		add(joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickCreate)), "new")
+		add(joinHotkeyLabels(h.actionKey(hotkeyNewSession), h.actionKey(hotkeyQuickSession)), "new")
 		add(h.actionKey(hotkeyImport), "import")
 		add(h.actionKey(hotkeyCreateGroup), "group")
 	case h.cursor >= 0 && h.cursor < len(h.flatItems):
@@ -14280,6 +14405,9 @@ func (h *Home) renderSessionList(width, height int) string {
 		}
 
 		hints := make([]string, 0, 3)
+		if key := h.actionKey(hotkeyQuickSession); key != "" {
+			hints = append(hints, fmt.Sprintf("Press %s to start a quick session", key))
+		}
 		if key := h.actionKey(hotkeyNewSession); key != "" {
 			hints = append(hints, fmt.Sprintf("Press %s to create a new session", key))
 		}

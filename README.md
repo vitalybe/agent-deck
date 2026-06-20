@@ -77,14 +77,15 @@ agent-deck skill attach my-proj docs --source pool --restart # Attach skill + re
 agent-deck web                    # Start web UI on http://127.0.0.1:8420
 ```
 
-> **⚠️ Changed in v1.9.55:** in the new-session dialog (`n`), **Enter advances to the next field** on the Name and Branch inputs instead of submitting — typing a name and hitting Enter no longer creates a session with all defaults. **Ctrl+S creates the session from any field.** The dialog also remembers your last-used tool. Restore the old behavior with `[ui].new_session_enter_advances = false`.
+> **⚠️ Changed in v1.9.55:** in the new-session dialog (`N`), **Enter advances to the next field** on the Name and Branch inputs instead of submitting — typing a name and hitting Enter no longer creates a session with all defaults. **Ctrl+S creates the session from any field.** The dialog also remembers your last-used tool. Restore the old behavior with `[ui].new_session_enter_advances = false`.
 
 ### Key Shortcuts
 
 | Key | Action |
 |-----|--------|
 | `Enter` | Attach to session |
-| `n` | New session |
+| `n` | Quick session (prompt + optional worktree) |
+| `N` | New session (full dialog) |
 | `f` / `F` | Fork (quick / dialog) |
 | `A` / `Shift+U` | Archive / unarchive session |
 | `^` | Show archived sessions |
@@ -799,7 +800,7 @@ agent-deck remote update dev      # specific remote
 
 Remote configuration is stored under `[remotes]` in `$XDG_CONFIG_HOME/agent-deck/config.toml` (default `~/.config/agent-deck/config.toml`). All `remote` subcommands support `--json` output for scripting. Run `agent-deck remote --help` for the full flag reference.
 
-Pressing `n` on a remote group or session opens the full new-session dialog in **remote mode**: path suggestions come from the remote host, the remote session's group is pre-filled, and the create routes over SSH with your chosen tool — sessions are never accidentally created on localhost.
+Pressing `n` or `N` on a remote group or session opens the full new-session dialog in **remote mode**: path suggestions come from the remote host, the remote session's group is pre-filled, and the create routes over SSH with your chosen tool — sessions are never accidentally created on localhost. (Quick sessions are local-only, so `n` on a remote item also routes here.)
 
 #### Security
 
