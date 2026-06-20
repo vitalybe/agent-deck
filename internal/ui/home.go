@@ -10586,16 +10586,21 @@ func (h *Home) openQuickEditor(initial string) tea.Cmd {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	uiLog.Info("quick_editor_launch", slog.String("editor", fields[0]), slog.String("file", tmpPath))
 	return tea.ExecProcess(cmd, func(execErr error) tea.Msg {
 		defer os.Remove(tmpPath)
 		if execErr != nil {
+			uiLog.Warn("quick_editor_failed", slog.String("error", execErr.Error()))
 			return quickEditorDoneMsg{err: execErr}
 		}
 		data, readErr := os.ReadFile(tmpPath)
 		if readErr != nil {
+			uiLog.Warn("quick_editor_read_failed", slog.String("error", readErr.Error()))
 			return quickEditorDoneMsg{err: readErr}
 		}
-		return quickEditorDoneMsg{text: collapsePromptBuffer(string(data))}
+		text := collapsePromptBuffer(string(data))
+		uiLog.Debug("quick_editor_done", slog.Int("chars", len(text)))
+		return quickEditorDoneMsg{text: text}
 	})
 }
 
@@ -10628,7 +10633,7 @@ func (h *Home) handleQuickDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // quickSessionCreate derives a slug from the prompt (ag-style), optionally
 // resolves a worktree target named after the slug, then creates and starts the
 // session with the prompt delivered as the agent's first message. Slug
-// summarization (aichat) and worktree creation can take a moment, so it all runs
+// summarization (ail) and worktree creation can take a moment, so it all runs
 // off the UI thread inside the returned command.
 func (h *Home) quickSessionCreate(prompt string, worktree bool, groupPath string) tea.Cmd {
 	// Resolve project path + tool on the UI goroutine (cheap config/cursor reads).
@@ -10682,6 +10687,13 @@ func (h *Home) quickSessionCreate(prompt string, worktree bool, groupPath string
 		}
 	}
 
+	uiLog.Info("quick_session_submit",
+		slog.Bool("worktree", worktree),
+		slog.String("group", groupPath),
+		slog.String("tool", command),
+		slog.Int("prompt_len", len(prompt)),
+		slog.String("temp_id", tempID))
+
 	return func() tea.Msg {
 		slug := slugFromPrompt(prompt)
 		if slug == "" {
@@ -10694,15 +10706,25 @@ func (h *Home) quickSessionCreate(prompt string, worktree bool, groupPath string
 			branch = git.SanitizeBranchName(slug)
 			wtPath, repoRoot, fallback, errMsg := resolveWorktreeTarget(projectPath, branch, true)
 			if errMsg != "" {
+				uiLog.Warn("quick_session_worktree_failed",
+					slog.String("branch", branch), slog.String("error", errMsg))
 				return sessionCreatedMsg{err: fmt.Errorf("%s", errMsg)}
 			}
 			if fallback {
+				uiLog.Info("quick_session_worktree_fallback",
+					slog.String("path", projectPath), slog.String("reason", "not a VCS repo"))
 				branch = ""
 			} else {
 				worktreePath = wtPath
 				worktreeRepoRoot = repoRoot
 			}
 		}
+
+		uiLog.Info("quick_session_create",
+			slog.String("slug", slug),
+			slog.String("branch", branch),
+			slog.Bool("worktree", branch != ""),
+			slog.String("temp_id", tempID))
 
 		create := h.createSessionInGroupWithWorktreeAndOptions(
 			slug, projectPath, command, groupPath,
