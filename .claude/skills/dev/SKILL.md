@@ -22,10 +22,25 @@ fit.
 
 ## Ground rules for this machine
 
-- **Finding `go`**: `go` is usually not on PATH here (Homebrew's go is broken),
-  but a toolchain lives in the module cache. Resolve it once per session and
-  reuse it: `GO=$(.claude/skills/dev/scripts/find-go.sh)`. Use `"$GO"` for every
-  build/test/vet command.
+- **Toolchain is flox.** The reproducible dev/test toolchain (Go, clang,
+  golangci-lint, lefthook, tmux, gh, …) is provided by a [flox](https://flox.dev)
+  environment defined in `.flox/env/manifest.toml`. `go` and friends are **not on
+  PATH** outside it. Run build/test/vet commands inside the env:
+
+  ```bash
+  flox activate -- go build ./...
+  flox activate -- go test ./internal/<pkg>/ -count=1
+  ```
+
+  Go specifics: nixpkgs has no 1.25.11, so the env ships a 1.26.x base and
+  redirects via `GOTOOLCHAIN=go1.25.11` (set in the manifest's `[vars]`, so both
+  `make` and lefthook's bare-`go` pre-push hook agree). The `go.mod` floor is
+  `>=1.25.11`. Run `flox install <pkg>` to add a tool; don't `brew install` -
+  Homebrew's go is broken here and the env is the source of truth.
+- **Fallback `find-go.sh`**: if flox isn't available, resolve a `go` from the
+  module cache once per session and reuse it:
+  `GO=$(.claude/skills/dev/scripts/find-go.sh)`, then `"$GO" build ./...`. Prefer
+  flox when present.
 - **Shell is fish**; GNU coreutils are installed (use `rg`, `fd`). Avoid `cd` in
   compound commands (permission prompt) - prefer absolute paths.
 - **`build/` is gitignored** - the rebuilt binary never shows up in `git status`.
@@ -62,14 +77,17 @@ func(){ ...restore... })`).
 
 ## Build, vet, test
 
-Run from the repo root with the resolved `$GO`:
+Run from the repo root inside the flox env:
 
 ```bash
-GO=$(.claude/skills/dev/scripts/find-go.sh)
-"$GO" build ./...                 # whole module compiles
-"$GO" vet ./internal/<pkg>/       # the package(s) you touched
-"$GO" test ./internal/<pkg>/ -count=1   # affected package(s)
+flox activate -- go build ./...                 # whole module compiles
+flox activate -- go vet ./internal/<pkg>/       # the package(s) you touched
+flox activate -- go test ./internal/<pkg>/ -count=1   # affected package(s)
 ```
+
+To run several commands in one shell, activate once: `flox activate` then run
+them interactively. The `find-go.sh` fallback (`GO=$(...); "$GO" build ./...`)
+is only for when flox is unavailable.
 
 Start with a targeted test run (e.g. `-run 'Group|Render|Tool'`) for fast
 feedback, then run the **full affected package** before merging so you don't
@@ -120,8 +138,8 @@ fast-forward) so the branch boundary stays visible, then rebuild the binary:
 git checkout main
 git merge --no-ff <branch> -m "Merge branch '<branch>'"
 
-VERSION=$("$GO" version >/dev/null 2>&1 && git describe --tags --always --dirty || echo dev)
-"$GO" build -ldflags "-X main.Version=$VERSION" -o ./build/agent-deck ./cmd/agent-deck
+VERSION=$(git describe --tags --always --dirty || echo dev)
+flox activate -- go build -ldflags "-X main.Version=$VERSION" -o ./build/agent-deck ./cmd/agent-deck
 ```
 
 The binary at `./build/agent-deck` is on the user's PATH, so rebuilding makes
@@ -139,10 +157,10 @@ nothing was pushed. Offer to push or to clean up the merged local branches
 
 | Step | Command |
 | --- | --- |
-| Resolve go | `GO=$(.claude/skills/dev/scripts/find-go.sh)` |
+| Toolchain | `flox activate` (or `flox activate -- <cmd>`) |
 | Branch | `git checkout main && git checkout -b fix/<slug>` |
-| Build | `"$GO" build ./...` |
-| Test | `"$GO" test ./internal/<pkg>/ -count=1` |
+| Build | `flox activate -- go build ./...` |
+| Test | `flox activate -- go test ./internal/<pkg>/ -count=1` |
 | Commit | `git commit -F /tmp/claude-<epoch>.md` |
 | Merge | `git merge --no-ff <branch> -m "Merge branch '<branch>'"` |
-| Rebuild | `"$GO" build -ldflags "-X main.Version=$VERSION" -o ./build/agent-deck ./cmd/agent-deck` |
+| Rebuild | `flox activate -- go build -ldflags "-X main.Version=$VERSION" -o ./build/agent-deck ./cmd/agent-deck` |
