@@ -162,6 +162,47 @@ func TestSaveInstancesPreservesFreshAutoNameFieldsFromStaleSnapshot(t *testing.T
 	}
 }
 
+func TestWriteTmuxSessionTargetsOnlyTmuxColumns(t *testing.T) {
+	db := newTestDB(t)
+	now := time.Now()
+	row := &InstanceRow{
+		ID:             "restart-1",
+		Title:          "wiki-import",
+		ProjectPath:    "/tmp/obsidian",
+		Tool:           "claude",
+		Status:         "error",
+		CreatedAt:      now,
+		ToolData:       json.RawMessage("{}"),
+		TmuxSession:    "agentdeck_wiki-import_dead0000",
+		TmuxSocketName: "agentdeck",
+	}
+	if err := db.SaveInstances([]*InstanceRow{row}); err != nil {
+		t.Fatalf("seed SaveInstances: %v", err)
+	}
+
+	if err := db.WriteTmuxSession(row.ID, "agentdeck_wiki-import_live9999", "agentdeck"); err != nil {
+		t.Fatalf("WriteTmuxSession: %v", err)
+	}
+
+	loaded, err := db.LoadInstances()
+	if err != nil {
+		t.Fatalf("LoadInstances: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("loaded %d rows, want 1", len(loaded))
+	}
+	if got := loaded[0].TmuxSession; got != "agentdeck_wiki-import_live9999" {
+		t.Errorf("TmuxSession = %q, want freshly written name", got)
+	}
+	// Other columns must be untouched by the targeted write.
+	if got := loaded[0].Title; got != "wiki-import" {
+		t.Errorf("WriteTmuxSession disturbed Title: got %q", got)
+	}
+	if got := loaded[0].Status; got != "error" {
+		t.Errorf("WriteTmuxSession disturbed Status: got %q", got)
+	}
+}
+
 func TestSaveLoadGroups(t *testing.T) {
 	db := newTestDB(t)
 
