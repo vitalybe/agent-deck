@@ -84,7 +84,7 @@ Complete reference for agent-deck Terminal UI features.
 
 An ag-style prompt-first launcher: a single text input plus a **Use Worktree** checkbox.
 
-- Type a task prompt and press `Enter`. The session name (and worktree branch, when enabled) is derived from the prompt — a short prompt is slugified directly; a longer one is summarized via the local `ail` CLI when available, falling back to a local slug. The prompt is delivered to the agent as its first message.
+- Type a task prompt and press `Enter`. The session name (and worktree branch, when enabled) is derived from the prompt — a short prompt is slugified directly; a longer one is summarized via a model CLI (`aichat`, falling back to the local `ail` model, then to a local slug). The prompt is delivered to the agent as its first message.
 - The session launches with your configured default tool.
 
 **Controls:** `Tab` toggle Use Worktree | `Ctrl+G` compose the prompt in `$EDITOR` | `Enter` create | `Esc` cancel
