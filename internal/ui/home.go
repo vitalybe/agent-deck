@@ -10577,6 +10577,15 @@ func (h *Home) openQuickEditor(initial string) tea.Cmd {
 	}
 	args := append(fields[1:], tmpPath)
 	cmd := exec.Command(fields[0], args...)
+	// Wire the editor to the real terminal. tea.ExecProcess otherwise defaults
+	// the child's stdin/stdout to the Program's input/output, which here is the
+	// CSIuReader wrapper around os.Stdin (tea.WithInput) — not a tty. Editors
+	// like vim then warn "Input is not from a terminal" and mangle key input.
+	// ReleaseTerminal (called by ExecProcess) restores cooked mode first, so
+	// os.Stdin/os.Stdout are safe to hand to the child directly.
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return tea.ExecProcess(cmd, func(execErr error) tea.Msg {
 		defer os.Remove(tmpPath)
 		if execErr != nil {
