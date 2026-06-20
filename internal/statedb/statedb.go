@@ -1116,6 +1116,33 @@ func (s *StateDB) WriteAutoNameDescription(id, description string) error {
 	})
 }
 
+// WriteTmuxSession persists the tmux session name and socket for an instance
+// with a targeted single-column UPDATE — never a whole-row INSERT OR REPLACE.
+//
+// Issue: Restart()'s fallback recreate path mints a brand-new tmux session
+// name (fresh random suffix) but the only persistence was the TUI's full-row
+// saveInstances(), which loses the race to the `claude --resume` SessionStart
+// hook's concurrent DB touch (save_abort_external_change → reload). The reload
+// then reverts the instance to the OLD/dead tmux_session name, Exists() stays
+// false, and the next Enter recreates yet another session while the #596/#666
+// sweep kills the previous one — an infinite restart loop that leaks zombie
+// tmux sessions. Persisting the new name here, the moment it is live, lets the
+// reload read the correct name instead of the stale one.
+//
+// Like WriteAutoNameDescription / WriteClaudeSessionBinding this touches ONLY
+// its own columns, so a concurrent writer's edits to any other field of the
+// same row are preserved, and it is wrapped in withBusyRetry for the same
+// SQLITE_BUSY reason.
+func (s *StateDB) WriteTmuxSession(id, sessionName, socketName string) error {
+	return withBusyRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE instances SET tmux_session = ?, tmux_socket_name = ? WHERE id = ?`,
+			sessionName, socketName, id,
+		)
+		return err
+	})
+}
+
 // WriteLastSentAt persists the "we talked to it" clock (Unix seconds) for a
 // session into the last_sent_at column with a targeted single-column UPDATE —
 // never a whole-row INSERT OR REPLACE and never SaveInstances. The keysender
