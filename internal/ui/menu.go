@@ -25,7 +25,7 @@ func (m *Menu) View() string {
 		MenuKey("↑↓", "Navigate"),
 		MenuKey("Enter", "Attach"),
 		MenuKey("/", "Search"),
-		MenuKey("n", "New"),
+		MenuKey("n", "Quick"),
 		MenuKey("Tab", "Fold"),
 		MenuKey("d", "Delete"),
 		MenuKey("i", "Import"),

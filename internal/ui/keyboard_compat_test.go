@@ -425,7 +425,7 @@ func TestCSIuReaderModifyOtherKeysMixed(t *testing.T) {
 // tea.WithInput(NewCSIuReader(os.Stdin)) wiring.
 func TestCSIuReaderAllShiftHotkeys(t *testing.T) {
 	// Every uppercase hotkey defined in defaultHotkeyBindings:
-	//   N=quick_create, R=restart, T=restart_fresh, D=close_session, M=move_to_group,
+	//   N=new_session, R=restart, T=restart_fresh, D=close_session, M=move_to_group,
 	//   F=fork_with_options, E=exec_shell, W=worktree_finish, S=settings,
 	//   G=global_search, K=move_up, J=move_down, C=cost_dashboard
 	hotkeys := map[rune]int{

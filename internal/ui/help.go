@@ -164,7 +164,7 @@ func (h *HelpOverlay) View() string {
 	}
 
 	// Define help sections
-	newKeys := h.keyPair(hotkeyNewSession, hotkeyQuickCreate, "n/N")
+	newKeys := h.keyPair(hotkeyQuickSession, hotkeyNewSession, "n/N")
 	forkKeys := h.keyPair(hotkeyQuickFork, hotkeyForkWithOptions, "f/F")
 	reorderUpKeys := "+ / K / Shift+↑"
 	reorderDownKeys := "- / J / Shift+↓"
@@ -243,7 +243,7 @@ func (h *HelpOverlay) View() string {
 		{
 			title: "SESSIONS",
 			items: [][2]string{
-				{newKeys, "New / quick create"},
+				{newKeys, "Quick session / new session"},
 				{renameKey, "Rename session"},
 				{restartKey, "Restart session"},
 				{restartFreshKey, "Restart with new session ID"},

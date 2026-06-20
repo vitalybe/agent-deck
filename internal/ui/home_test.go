@@ -327,8 +327,8 @@ func TestHomeUpdateNewDialog(t *testing.T) {
 	home.width = 100
 	home.height = 30
 
-	// Press n to open new dialog
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}
+	// Press N to open the full new-session dialog (n now opens Quick Session).
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}}
 	model, _ := home.Update(msg)
 
 	h, ok := model.(*Home)
@@ -336,7 +336,28 @@ func TestHomeUpdateNewDialog(t *testing.T) {
 		t.Fatal("Update should return *Home")
 	}
 	if !h.newDialog.IsVisible() {
-		t.Error("New dialog should be visible after pressing n")
+		t.Error("New dialog should be visible after pressing N")
+	}
+}
+
+func TestHomeUpdateQuickDialog(t *testing.T) {
+	home := NewHome()
+	home.width = 100
+	home.height = 30
+
+	// Press n to open the ag-style Quick Session dialog.
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}
+	model, _ := home.Update(msg)
+
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("Update should return *Home")
+	}
+	if !h.quickDialog.IsVisible() {
+		t.Error("Quick Session dialog should be visible after pressing n")
+	}
+	if h.newDialog.IsVisible() {
+		t.Error("Full new-session dialog should NOT open on n")
 	}
 }
 
@@ -1169,9 +1190,10 @@ func TestRenderSessionListEmptyUsesConfiguredKeys(t *testing.T) {
 func TestRenderSessionListEmptyWithUnboundPrimaryActions(t *testing.T) {
 	home := NewHome()
 	home.setHotkeys(resolveHotkeys(map[string]string{
-		hotkeyNewSession:  "",
-		hotkeyImport:      "",
-		hotkeyCreateGroup: "",
+		hotkeyQuickSession: "",
+		hotkeyNewSession:   "",
+		hotkeyImport:       "",
+		hotkeyCreateGroup:  "",
 	}))
 
 	rendered := home.renderSessionList(60, 22)
@@ -1460,7 +1482,11 @@ func TestSelectedRemotePreviewTarget(t *testing.T) {
 	}
 }
 
-func TestRemoteSelectionQuickCreateStillRunsRemoteCommand(t *testing.T) {
+// TestRemoteSelectionNOpensRemoteDialog: the old `N` quick-create-on-remote was
+// removed. `N` now opens the full new-session dialog; on a remote item it opens
+// that dialog with the remote target recorded (the #1353 contract), so submit
+// routes to the remote rather than silently quick-creating.
+func TestRemoteSelectionNOpensRemoteDialog(t *testing.T) {
 	home := NewHome()
 	home.width = 100
 	home.height = 30
@@ -1469,18 +1495,16 @@ func TestRemoteSelectionQuickCreateStillRunsRemoteCommand(t *testing.T) {
 	home.flatItems = []session.Item{{Type: session.ItemTypeRemoteSession, RemoteSession: &remote, RemoteName: "myserver"}}
 	home.cursor = 0
 
-	_, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	if cmd == nil {
-		t.Fatal("pressing N on remote selection should return remote create command")
+	model, cmd := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	h := model.(*Home)
+	if cmd != nil {
+		t.Fatal("pressing N on a remote selection should open the dialog, not immediately create")
 	}
-
-	msg := cmd()
-	createMsg, ok := msg.(sessionCreatedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want sessionCreatedMsg", msg)
+	if !h.newDialog.IsVisible() {
+		t.Fatal("pressing N on a remote selection should open the new-session dialog")
 	}
-	if createMsg.err == nil {
-		t.Fatal("expected error when remote config is unavailable")
+	if h.pendingRemoteName != "myserver" {
+		t.Fatalf("pendingRemoteName = %q, want myserver", h.pendingRemoteName)
 	}
 }
 
