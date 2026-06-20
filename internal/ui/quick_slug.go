@@ -12,9 +12,9 @@ import (
 
 // Slug derivation for the Quick Session flow, modeled on the `ag` shell script
 // (~/hq/scripts/ag/ag.sh). A short prompt is slugified directly; a longer one
-// is summarized into a 2-3 word kebab slug by the local `ail` CLI. Every path
-// degrades to a local slugify so the flow never blocks on (or requires) the
-// external tool.
+// is summarized into a 2-3 word kebab slug by a model CLI (aichat, then ail as
+// an offline fallback). Every path degrades to a local slugify so the flow
+// never blocks on (or requires) an external tool.
 
 // quickSlugTimeout bounds the ail call so a slow/hung model can never wedge
 // session creation; on timeout we fall back to the local slugify.
@@ -65,7 +65,7 @@ func slugFromPrompt(prompt string) string {
 		method = "direct"
 	} else {
 		slug = summarizeSlug(prompt)
-		method = "ail"
+		method = "summarize"
 	}
 
 	if slug == "" {
@@ -94,21 +94,42 @@ func clampSlug(slug string, maxSegments int) string {
 	return strings.Join(parts[:maxSegments], "-")
 }
 
-// extractSlugCandidate pulls a plausible slug out of ail's (often chatty,
-// markdown-wrapped, multi-option) output. A real slug line is a single
-// whitespace-free token; prose lines have internal spaces and are skipped. The
-// first qualifying token wins and is clamped to quickSlugMaxSegments words — so
-// a clean-but-verbose answer (e.g. "test-plan-unit-integration-e2e-testing")
-// becomes a sane slug instead of being discarded. Returns "" when no single
-// token line is found, so the caller falls back to a local slug.
+// extractSlugCandidate pulls a plausible slug out of a slug tool's (often
+// chatty, markdown-wrapped, multi-option) output. It handles three observed
+// shapes:
+//   - a clean single-token line ("plan-skills"),
+//   - a verbose-but-clean token ("test-plan-unit-integration-e2e-testing"),
+//   - the slug followed by a leaked special token and more generated prose on
+//     the same line ("plan-unit-integration-e2e-tests<|endoftext|>The task...").
+//
+// It cuts everything from the first <|...|> marker, then per line prefers a
+// whole single-token line, else the first hyphenated token (a strong kebab
+// signal), ignoring trailing prose. The winner is clamped to
+// quickSlugMaxSegments words. Returns "" when nothing qualifies, so the caller
+// falls back to a local slug.
 func extractSlugCandidate(out string) string {
+	// Some local models emit a special token (e.g. <|endoftext|>) inline and
+	// keep generating; drop everything from the first marker onward.
+	if i := strings.Index(out, "<|"); i >= 0 {
+		out = out[:i]
+	}
 	for _, line := range strings.Split(out, "\n") {
 		// Strip common markdown / quote / list wrappers.
 		trimmed := strings.Trim(strings.TrimSpace(line), "*`\"'>-•· \t")
-		if trimmed == "" || strings.ContainsAny(trimmed, " \t") {
-			continue // empty, or prose (has internal whitespace)
+		if trimmed == "" {
+			continue
 		}
-		s := slugify(trimmed)
+		token := trimmed
+		if strings.ContainsAny(trimmed, " \t") {
+			// Prose line — but a slug may lead it. Accept the first token only
+			// if it looks like a kebab slug (contains a hyphen); else skip.
+			first := strings.Fields(trimmed)[0]
+			if !strings.Contains(first, "-") {
+				continue
+			}
+			token = first
+		}
+		s := slugify(token)
 		if s == "" {
 			continue
 		}
@@ -117,41 +138,64 @@ func extractSlugCandidate(out string) string {
 	return ""
 }
 
-// summarizeSlug asks the local `ail` CLI for a short kebab-case summary of the
-// prompt. ail is a chatty assistant: it may reply with prose, markdown, several
-// options, or echo the task back, so we (a) avoid putting an example slug in the
-// instruction (ail tends to echo it verbatim) and (b) extract a single plausible
-// slug token from the output rather than slugifying the whole reply. Any error
-// or non-answer yields "" so callers fall back to the local slug.
+// slugTools is the ordered list of CLIs tried to summarize a prompt into a
+// slug. aichat (a larger, remote model) produces noticeably cleaner slugs, so
+// it goes first; ail (a fast, offline, local model) is the fallback when aichat
+// is unavailable or fails (e.g. offline). When both fail the caller drops to a
+// local slug.
+var slugTools = []string{"aichat", "ail"}
+
+// slugInstruction is the prompt sent to a slug tool. It deliberately omits an
+// example slug (chatty models tend to echo it verbatim) and demands a single
+// bare slug line.
+func slugInstruction(prompt string) string {
+	return "Generate a git branch name for the task below: 2 to 4 lowercase words " +
+		"joined by hyphens (kebab-case). Reply with ONLY the slug on its own line - " +
+		"no quotes, no markdown, no commentary, no alternatives.\n\nTask:\n" + prompt
+}
+
+// summarizeSlug asks a slug tool (aichat, then ail) for a short kebab-case
+// summary of the prompt. These are chatty assistants — they may reply with
+// prose, markdown, several options, echo the task back, or leak a special
+// token — so extractSlugCandidate pulls a single plausible token from the
+// output rather than slugifying the whole reply. Returns "" when every tool is
+// missing or yields no usable slug, so callers fall back to the local slug.
 func summarizeSlug(prompt string) string {
-	if _, err := exec.LookPath("ail"); err != nil {
-		uiLog.Debug("quick_slug_ail_missing", slog.String("reason", "ail not found on PATH"))
+	instruction := slugInstruction(prompt)
+	for _, tool := range slugTools {
+		if slug := summarizeWith(tool, instruction); slug != "" {
+			return slug
+		}
+	}
+	return ""
+}
+
+// summarizeWith runs a single slug tool with the instruction as its sole
+// positional argument and returns an extracted slug, or "" on missing
+// binary / error / non-answer.
+func summarizeWith(tool, instruction string) string {
+	if _, err := exec.LookPath(tool); err != nil {
+		uiLog.Debug("quick_slug_tool_missing", slog.String("tool", tool))
 		return ""
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), quickSlugTimeout)
 	defer cancel()
 
-	instruction := "Generate a git branch name for the task below: 2 to 4 lowercase words " +
-		"joined by hyphens (kebab-case). Reply with ONLY the slug on its own line - " +
-		"no quotes, no markdown, no commentary, no alternatives.\n\nTask:\n" + prompt
-	cmd := exec.CommandContext(ctx, "ail", instruction)
-
 	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, tool, instruction)
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		uiLog.Warn("quick_slug_ail_failed", slog.String("error", err.Error()))
+		uiLog.Warn("quick_slug_tool_failed", slog.String("tool", tool), slog.String("error", err.Error()))
 		return ""
 	}
 
 	raw := strings.TrimSpace(out.String())
 	slug := extractSlugCandidate(out.String())
 	if slug == "" {
-		uiLog.Debug("quick_slug_ail_rejected",
-			slog.String("raw", raw),
-			slog.String("reason", "no short single-token slug in output"))
+		uiLog.Debug("quick_slug_tool_rejected", slog.String("tool", tool), slog.String("raw", raw))
 		return ""
 	}
-	uiLog.Debug("quick_slug_ail_ok", slog.String("raw", raw), slog.String("slug", slug))
+	uiLog.Debug("quick_slug_tool_ok", slog.String("tool", tool), slog.String("raw", raw), slog.String("slug", slug))
 	return slug
 }

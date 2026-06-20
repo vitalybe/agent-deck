@@ -88,6 +88,30 @@ func TestExtractSlugCandidate_VerboseSingleTokenClamped(t *testing.T) {
 	}
 }
 
+func TestExtractSlugCandidate_EndOfTextLeakThenProse(t *testing.T) {
+	// Real ail output: slug, then a leaked special token, then prose, all on one
+	// line. The slug prefix must be recovered (and clamped), not discarded.
+	raw := "plan-unit-integration-e2e-tests<|endoftext|>The task is to refine the requirements of the change and test it out."
+	got := extractSlugCandidate(raw)
+	// "plan-unit-integration-e2e-tests" is exactly 5 segments — within the cap,
+	// so it's recovered intact (the leaked token + prose are dropped).
+	want := "plan-unit-integration-e2e-tests"
+	if got != want {
+		t.Errorf("extractSlugCandidate = %q, want %q", got, want)
+	}
+}
+
+func TestExtractSlugCandidate_SlugThenProseSameLine(t *testing.T) {
+	// A hyphenated leading token is taken even when prose follows on the line.
+	if got := extractSlugCandidate("plan-skills here is why that fits"); got != "plan-skills" {
+		t.Errorf("extractSlugCandidate = %q, want plan-skills", got)
+	}
+	// A non-hyphenated prose lead is not mistaken for a slug.
+	if got := extractSlugCandidate("Sure, here you go: plan-skills"); got != "" {
+		t.Errorf("expected empty (prose lead, no hyphen in first token), got %q", got)
+	}
+}
+
 func TestExtractSlugCandidate_AllProseReturnsEmpty(t *testing.T) {
 	// No single-token line → caller falls back to the local slug.
 	raw := "I think a good name would be something about the plan skill testing."
