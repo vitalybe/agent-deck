@@ -83,19 +83,57 @@ func TestQuickDialog_EscHides(t *testing.T) {
 	}
 }
 
-// TestQuickDialog_EnterEmptyPromptStaysOpen verifies a blank prompt does not
-// submit (and does not crash trying to create a session).
-func TestQuickDialog_EnterEmptyPromptStaysOpen(t *testing.T) {
+// TestQuickDialog_CtrlSEmptyPromptStaysOpen verifies a blank prompt does not
+// submit (and does not crash trying to create a session). Submit is Ctrl+S now
+// that the input is a multiline textarea (Enter inserts a newline).
+func TestQuickDialog_CtrlSEmptyPromptStaysOpen(t *testing.T) {
 	h := NewHome()
 	h.width = 100
 	h.height = 30
 	h.quickDialog.Show("default", "default")
-	_, cmd := h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyCtrlS})
 	if cmd != nil {
-		t.Error("Enter on empty prompt should be a no-op (no create command)")
+		t.Error("Ctrl+S on empty prompt should be a no-op (no create command)")
 	}
 	if !h.quickDialog.IsVisible() {
 		t.Error("dialog should stay open on empty submit")
+	}
+}
+
+// TestQuickDialog_EnterOnTextLineInsertsNewline verifies Enter on a line that
+// has text inserts a newline (does not submit/close the dialog).
+func TestQuickDialog_EnterOnTextLineInsertsNewline(t *testing.T) {
+	h := NewHome()
+	h.width = 100
+	h.height = 30
+	h.quickDialog.Show("default", "default")
+	h.quickDialog.SetPrompt("line one") // cursor lands at end of a non-empty line
+	if h.quickDialog.CurrentLineEmpty() {
+		t.Fatal("precondition: current line should be non-empty")
+	}
+	h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !h.quickDialog.IsVisible() {
+		t.Error("Enter on a non-empty line must insert a newline, not submit")
+	}
+}
+
+// TestQuickDialog_EnterOnEmptyLineSubmits verifies Enter on a blank line ends
+// input: with a non-empty prompt it closes the dialog and returns a create cmd.
+func TestQuickDialog_EnterOnEmptyLineSubmits(t *testing.T) {
+	h := NewHome()
+	h.width = 100
+	h.height = 30
+	h.quickDialog.Show("default", "default")
+	h.quickDialog.SetPrompt("do the thing\n") // trailing newline → cursor on empty line
+	if !h.quickDialog.CurrentLineEmpty() {
+		t.Fatal("precondition: current line should be empty after a trailing newline")
+	}
+	_, cmd := h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if h.quickDialog.IsVisible() {
+		t.Error("Enter on an empty line with a non-empty prompt must submit/close")
+	}
+	if cmd == nil {
+		t.Error("submit should return a create command")
 	}
 }
 

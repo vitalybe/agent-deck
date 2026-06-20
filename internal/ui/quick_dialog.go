@@ -3,19 +3,19 @@ package ui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// QuickDialog is the ag-style Quick Session prompt (hotkey `n`). It is a single
-// text input for a task prompt plus a "Use Worktree" checkbox. On submit the
-// prompt both seeds a derived session/branch slug and is delivered to the agent
-// as its first message. Ctrl+G opens $EDITOR to compose the prompt; Ctrl+1
-// toggles the worktree checkbox. The heavyweight NewDialog (hotkey `N`) remains
-// the full-control path.
+// QuickDialog is the ag-style Quick Session prompt (hotkey `n`). It is a
+// multiline text input for a task prompt plus a "Use Worktree" checkbox. On
+// submit the prompt both seeds a derived session/branch slug and is delivered
+// to the agent as its first message (collapsed to a single line). Ctrl+G opens
+// $EDITOR to compose the prompt; Tab toggles the worktree checkbox; Ctrl+S
+// creates. The heavyweight NewDialog (hotkey `N`) remains the full-control path.
 type QuickDialog struct {
-	input           textinput.Model
+	input           textarea.Model
 	worktreeEnabled bool
 	visible         bool
 	width           int
@@ -26,15 +26,22 @@ type QuickDialog struct {
 	groupName string
 }
 
-const quickDialogPreferredWidth = 72
+const (
+	quickDialogPreferredWidth = 72
+	quickDialogInputRows      = 6
+)
 
 // NewQuickDialog creates the Quick Session dialog (hidden).
 func NewQuickDialog() *QuickDialog {
-	ti := textinput.New()
-	ti.Placeholder = "Describe the task… (ctrl+g to edit in $EDITOR)"
-	ti.CharLimit = 4000
-	ti.Width = quickDialogPreferredWidth - 12
-	return &QuickDialog{input: ti}
+	ta := textarea.New()
+	ta.Placeholder = "Describe the task…  (Enter: newline · blank line or Ctrl+S: create)"
+	ta.CharLimit = 8000
+	ta.ShowLineNumbers = false
+	ta.Prompt = ""
+	ta.SetWidth(quickDialogPreferredWidth - 8)
+	ta.SetHeight(quickDialogInputRows)
+	ta.Blur()
+	return &QuickDialog{input: ta}
 }
 
 // Show opens the dialog rooted in the given parent group and focuses the input.
@@ -48,7 +55,6 @@ func (d *QuickDialog) Show(groupPath, groupName string) {
 	d.groupName = groupName
 	d.worktreeEnabled = false
 	d.input.SetValue("")
-	d.input.CursorEnd()
 	d.input.Focus()
 }
 
@@ -73,9 +79,9 @@ func (d *QuickDialog) SetSize(width, height int) {
 	}
 	d.width = width
 	d.height = height
-	w := quickDialogPreferredWidth - 12
+	w := quickDialogPreferredWidth - 8
 	if width > 0 && width < quickDialogPreferredWidth+10 {
-		w = width - 22
+		w = width - 18
 	}
 	if w < 20 {
 		w = 20
@@ -83,10 +89,12 @@ func (d *QuickDialog) SetSize(width, height int) {
 	if w > 120 {
 		w = 120
 	}
-	d.input.Width = w
+	d.input.SetWidth(w)
+	d.input.SetHeight(quickDialogInputRows)
 }
 
-// Prompt returns the trimmed prompt text.
+// Prompt returns the trimmed prompt text (may contain newlines). Callers that
+// send it to the agent or derive a slug collapse it first.
 func (d *QuickDialog) Prompt() string {
 	return strings.TrimSpace(d.input.Value())
 }
@@ -94,7 +102,6 @@ func (d *QuickDialog) Prompt() string {
 // SetPrompt replaces the input buffer (used after the Ctrl+G editor returns).
 func (d *QuickDialog) SetPrompt(text string) {
 	d.input.SetValue(text)
-	d.input.CursorEnd()
 }
 
 // WorktreeEnabled reports whether the "Use Worktree" checkbox is checked.
@@ -110,6 +117,19 @@ func (d *QuickDialog) ToggleWorktree() {
 
 // GroupPath returns the parent-group path captured at Show time.
 func (d *QuickDialog) GroupPath() string { return d.groupPath }
+
+// CurrentLineEmpty reports whether the cursor's current line is blank
+// (whitespace only). Used so that pressing Enter on an empty line submits — a
+// trailing blank line means "go" — while Enter on a line with text inserts a
+// newline like a normal multiline editor.
+func (d *QuickDialog) CurrentLineEmpty() bool {
+	lines := strings.Split(d.input.Value(), "\n")
+	row := d.input.Line()
+	if row < 0 || row >= len(lines) {
+		return true
+	}
+	return strings.TrimSpace(lines[row]) == ""
+}
 
 // UpdateInput feeds a key into the text input. Submit/cancel/toggle/editor keys
 // are intercepted by the parent (handleQuickDialogKey) before reaching here.
@@ -154,7 +174,7 @@ func (d *QuickDialog) View() string {
 	}
 	content.WriteString(box + " " + labelStyle.Render("Use Worktree") + hintStyle.Render("  (tab toggles)"))
 	content.WriteString("\n\n")
-	content.WriteString(hintStyle.Render("tab worktree │ ctrl+g edit in $EDITOR │ enter create │ esc cancel"))
+	content.WriteString(hintStyle.Render("⏎ blank line / ctrl+s create │ tab worktree │ ctrl+g edit │ esc"))
 
 	dialog := dialogStyle.Render(content.String())
 	return lipgloss.Place(d.width, d.height, lipgloss.Center, lipgloss.Center, dialog)
