@@ -6255,6 +6255,26 @@ func (i *Instance) Restart() error {
 
 	mcpLog.Debug("restart_start_succeeded")
 
+	// Persist the freshly minted tmux session name with a TARGETED single-column
+	// write, the moment it is live. recreateTmuxSession() mints a new random
+	// suffix; the TUI's full-row saveInstances() that would otherwise carry it
+	// loses the race to the `claude --resume` SessionStart hook's concurrent DB
+	// touch (save_abort_external_change → reload). Without this, the reload
+	// reverts the instance to the OLD/dead tmux_session name, Exists() stays
+	// false, and the next Enter recreates yet another session while the #596/#666
+	// sweep kills the previous one — the infinite restart loop. Mirrors the
+	// WriteStatus / WriteClaudeSessionBinding targeted-write pattern.
+	if i.tmuxSession != nil {
+		if db := statedb.GetGlobal(); db != nil {
+			if err := db.WriteTmuxSession(i.ID, i.tmuxSession.Name, i.TmuxSocketName); err != nil {
+				mcpLog.Warn("restart_persist_tmux_session_failed",
+					slog.String("instance_id", i.ID),
+					slog.String("tmux_session", i.tmuxSession.Name),
+					slog.String("error", err.Error()))
+			}
+		}
+	}
+
 	// CFG-07: emit the config-resolution log on restart too — triage must not
 	// go dark on the exact scenario most likely to need debugging.
 	if IsClaudeCompatible(i.Tool) {
