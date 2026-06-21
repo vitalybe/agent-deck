@@ -9667,7 +9667,12 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				h.rebuildFlatItems()
-				h.saveInstances() // Persist the new group
+				// forceSave: a non-force save can be skipped (isReloading) or
+				// aborted into a reload on an external mtime bump, which rebuilds
+				// the tree from stale disk state and drops the just-created group
+				// (and its default_path). Group structural changes MUST persist,
+				// mirroring the group-delete fix.
+				h.forceSaveInstances() // Persist the new group
 			}
 		case GroupDialogRename:
 			name := h.groupDialog.GetValue()
@@ -9682,7 +9687,12 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				h.instances = h.groupTree.GetAllInstances()
 				h.instancesMu.Unlock()
 				h.rebuildFlatItems()
-				h.saveInstances()
+				// forceSave: a non-force save can be skipped (isReloading) or
+				// aborted into a reload on an external mtime bump, which rebuilds
+				// the tree from stale disk state and drops the rename and the
+				// edited default_path. Group structural changes MUST persist,
+				// mirroring the group-delete fix.
+				h.forceSaveInstances()
 			}
 		case GroupDialogMove:
 			targetGroupPath := h.groupDialog.GetSelectedGroup()
@@ -9694,7 +9704,10 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					h.instances = h.groupTree.GetAllInstances()
 					h.instancesMu.Unlock()
 					h.rebuildFlatItems()
-					h.saveInstances()
+					// forceSave: see GroupDialogRename - a non-force save can be
+					// aborted into a reload that resurrects the session under its
+					// old group from stale disk state.
+					h.forceSaveInstances()
 				}
 			}
 		case GroupDialogRenameSession:
