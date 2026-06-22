@@ -8083,7 +8083,9 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// silently falls back to the process's cwd. If the group has no usable
 		// folder (a legacy group predating the mandatory-path rule), prompt the
 		// user to set one now via the group Edit dialog rather than guessing.
-		if h.getDefaultPathForGroup(groupPath) == "" {
+		// HasUsableDefaultPath is the git-free check: the full resolver shells
+		// out to git, which made opening the dialog visibly laggy.
+		if !h.groupTree.HasUsableDefaultPath(groupPath) {
 			if group, exists := h.groupTree.Groups[groupPath]; exists {
 				h.groupDialog.SetSize(h.width, h.height)
 				h.groupDialog.ShowRename(groupPath, group.Name, h.groupTree.ExplicitDefaultPathForGroup(groupPath))
