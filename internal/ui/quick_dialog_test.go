@@ -125,7 +125,10 @@ func TestQuickDialog_EnterOnEmptyLineSubmits(t *testing.T) {
 	h := NewHome()
 	h.width = 100
 	h.height = 30
-	h.quickDialog.Show("default", "default")
+	// Submit creates a session, which now requires the group to resolve to a
+	// valid default folder (no more cwd fallback). Seed one.
+	seedQuickSessionDefaultGroup(h)
+	h.quickDialog.Show(session.DefaultGroupPath, session.DefaultGroupName)
 	h.quickDialog.SetPrompt("do the thing\n") // trailing newline → cursor on empty line
 	if !h.quickDialog.CurrentLineEmpty() {
 		t.Fatal("precondition: current line should be empty after a trailing newline")
