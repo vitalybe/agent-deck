@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -47,9 +49,10 @@ func NewGroupDialog() *GroupDialog {
 	ti.CharLimit = 50
 	ti.Width = 30
 
-	// Issue #918: optional default working directory for new groups.
+	// Issue #918: default working directory for new groups. Now mandatory so
+	// new sessions never silently fall back to the process's cwd.
 	pi := textinput.New()
-	pi.Placeholder = "Default path (optional)"
+	pi.Placeholder = "Default path (required)"
 	pi.CharLimit = 1024
 	pi.Width = 30
 
@@ -273,9 +276,52 @@ func (g *GroupDialog) Validate() string {
 		if strings.Contains(name, "/") {
 			return "Group name cannot contain '/' character"
 		}
+
+		// A group's default folder is mandatory and must point at an existing
+		// directory: new sessions are rooted here, and an empty/bogus path used
+		// to silently fall back to the process's cwd (Quick Session) or prompt
+		// for directory creation. Require it up front instead.
+		if err := validateGroupDefaultPath(g.GetDefaultPath()); err != "" {
+			return err
+		}
 	}
 
 	return "" // Valid
+}
+
+// validateGroupDefaultPath returns an inline error message when the supplied
+// group default path is empty or does not resolve to an existing directory.
+// "~" is expanded and relative paths are made absolute before the check, so the
+// rule matches how the path is later resolved when creating sessions.
+func validateGroupDefaultPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "Default path is required"
+	}
+
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, path[2:])
+			}
+		}
+	}
+	if !filepath.IsAbs(path) {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "Default path does not exist"
+	}
+	if !info.IsDir() {
+		return "Default path must be a directory"
+	}
+	return ""
 }
 
 // SetError sets an inline validation error displayed inside the dialog
@@ -371,11 +417,29 @@ func (g *GroupDialog) Update(msg tea.KeyMsg) (*GroupDialog, tea.Cmd) {
 
 // nameAndPathFields renders the stacked "Name" + "Default Path" inputs shared by
 // the Create and Edit (rename) modes so both expose the group's startup folder.
-func (g *GroupDialog) nameAndPathFields() string {
+//
+// innerWidth is the dialog's content width (inside DialogBoxStyle's padding). The
+// text inputs are sized to fit within it so a long default path scrolls inside
+// the field instead of wrapping and breaking the layout, and both rows are
+// padded to the same width so they stay left-aligned under the dialog's
+// centering rather than each row being centered independently.
+func (g *GroupDialog) nameAndPathFields(innerWidth int) string {
 	labelStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+
+	const labelWidth = 14 // width of "Name:         " / "Default Path: "
+	const promptWidth = 2  // textinput "> " prompt
+	inputWidth := innerWidth - labelWidth - promptWidth
+	if inputWidth < 10 {
+		inputWidth = 10
+	}
+	g.nameInput.Width = inputWidth
+	g.pathInput.Width = inputWidth
+
 	nameRow := labelStyle.Render("Name:         ") + g.nameInput.View()
 	pathRow := labelStyle.Render("Default Path: ") + g.pathInput.View()
-	return nameRow + "\n" + pathRow
+
+	rowStyle := lipgloss.NewStyle().Width(innerWidth).Background(ColorSurface)
+	return rowStyle.Render(nameRow) + "\n" + rowStyle.Render(pathRow)
 }
 
 // View renders the dialog
@@ -387,10 +451,16 @@ func (g *GroupDialog) View() string {
 	var title string
 	var content string
 
+	// Responsive dialog width. Computed up front so the Name/Default Path inputs
+	// can be sized to the dialog's interior (width minus DialogBoxStyle's
+	// Padding(1,2) = 4 cells) and never overflow into a wrapped, ragged layout.
+	dialogWidth := fitDialogWidth(60, 44, g.width)
+	innerWidth := dialogWidth - 4
+
 	switch g.mode {
 	case GroupDialogCreate:
 		// Issue #918: show "Name" + optional "Default Path" fields stacked.
-		fields := g.nameAndPathFields()
+		fields := g.nameAndPathFields(innerWidth)
 
 		if g.parentName != "" {
 			title = "Create Subgroup"
@@ -424,7 +494,7 @@ func (g *GroupDialog) View() string {
 		// Rename exposes both the group name and its editable startup folder,
 		// so the default path can be changed any time (not just at creation).
 		title = "Edit Group"
-		content = g.nameAndPathFields()
+		content = g.nameAndPathFields(innerWidth)
 	case GroupDialogMove:
 		title = "Move to Group"
 		var items []string
@@ -446,11 +516,12 @@ func (g *GroupDialog) View() string {
 		content = strings.Join(items, "\n")
 	case GroupDialogRenameSession:
 		title = "Rename Session"
+		if w := innerWidth - 2; w >= 10 { // leave room for the "> " prompt
+			g.nameInput.Width = w
+		}
 		content = g.nameInput.View()
 	}
 
-	// Responsive dialog width
-	dialogWidth := fitDialogWidth(44, 30, g.width)
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment)
 	var hint string
 	switch {

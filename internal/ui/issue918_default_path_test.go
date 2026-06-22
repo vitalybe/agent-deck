@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -67,24 +68,67 @@ func TestGroupDialog_DefaultPath_PersistsAndPrefills_For918(t *testing.T) {
 	}
 }
 
-// TestGroupDialog_DefaultPath_OptionalLeftBlank_For918 confirms that leaving the
-// default-path field empty is valid (issue #918 explicitly calls the field
-// optional) — the group is still created and DefaultPathForGroup falls back to
-// session-history derivation, returning "" when the group has no sessions.
-func TestGroupDialog_DefaultPath_OptionalLeftBlank_For918(t *testing.T) {
+// TestGroupDialog_DefaultPath_RequiredAndMustExist asserts the default-path
+// field is now mandatory and must resolve to an existing directory. A blank
+// path or one pointing at a missing/non-directory target blocks the save, so
+// new sessions can never silently fall back to the process's cwd.
+func TestGroupDialog_DefaultPath_RequiredAndMustExist(t *testing.T) {
+	typeName := func(g *GroupDialog, name string) *GroupDialog {
+		for _, r := range name {
+			key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+			updated, _ := g.Update(key)
+			g = updated
+		}
+		return g
+	}
+	typePath := func(g *GroupDialog, path string) *GroupDialog {
+		tabKey := tea.KeyMsg{Type: tea.KeyTab}
+		updated, _ := g.Update(tabKey)
+		g = updated
+		for _, r := range path {
+			key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+			updated, _ := g.Update(key)
+			g = updated
+		}
+		return g
+	}
+
+	// Blank path -> required error.
 	g := NewGroupDialog()
 	g.Show()
-
-	for _, r := range "blank" {
-		key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
-		updated, _ := g.Update(key)
-		g = updated
+	g = typeName(g, "blank")
+	if err := g.Validate(); err == "" {
+		t.Fatalf("Validate() with blank default path = \"\", want a required error")
 	}
 
-	if got := g.GetDefaultPath(); got != "" {
-		t.Fatalf("GetDefaultPath() with no path entered = %q, want \"\"", got)
+	// Non-existent path -> rejected.
+	g = NewGroupDialog()
+	g.Show()
+	g = typeName(g, "missing")
+	g = typePath(g, "/no/such/dir/agentdeck-does-not-exist")
+	if err := g.Validate(); err == "" {
+		t.Fatalf("Validate() with non-existent default path = \"\", want an error")
 	}
+
+	// File (not a directory) -> rejected.
+	tmpFile := t.TempDir() + "/afile"
+	if err := os.WriteFile(tmpFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g = NewGroupDialog()
+	g.Show()
+	g = typeName(g, "file")
+	g = typePath(g, tmpFile)
+	if err := g.Validate(); err == "" {
+		t.Fatalf("Validate() with a file as default path = \"\", want an error")
+	}
+
+	// Existing directory -> accepted.
+	g = NewGroupDialog()
+	g.Show()
+	g = typeName(g, "ok")
+	g = typePath(g, t.TempDir())
 	if err := g.Validate(); err != "" {
-		t.Fatalf("Validate() with blank default path = %q, want \"\" (path is optional)", err)
+		t.Fatalf("Validate() with an existing directory = %q, want \"\"", err)
 	}
 }

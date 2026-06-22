@@ -1549,9 +1549,10 @@ func mostRecentPathForSessions(sessions []*Instance) string {
 	return ""
 }
 
-// resolveGroupDefaultPath normalizes a default path and maps git worktree paths
-// to their base repository root.
-func resolveGroupDefaultPath(defaultPath string) string {
+// expandDefaultPath trims, expands a leading ~, and makes the path absolute,
+// without touching the filesystem or git. Shared by the full resolver and the
+// cheap existence check so both agree on what a stored value points at.
+func expandDefaultPath(defaultPath string) string {
 	defaultPath = strings.TrimSpace(defaultPath)
 	if defaultPath == "" {
 		return ""
@@ -1574,6 +1575,19 @@ func resolveGroupDefaultPath(defaultPath string) string {
 		}
 	}
 
+	return defaultPath
+}
+
+// resolveGroupDefaultPath normalizes a default path and maps git worktree paths
+// to their base repository root. The worktree mapping shells out to git, so it
+// is reserved for the actual session-create path; the hot path of opening a
+// dialog uses the git-free HasUsableDefaultPath instead.
+func resolveGroupDefaultPath(defaultPath string) string {
+	defaultPath = expandDefaultPath(defaultPath)
+	if defaultPath == "" {
+		return ""
+	}
+
 	info, err := os.Stat(defaultPath)
 	if err != nil || !info.IsDir() {
 		return defaultPath
@@ -1589,6 +1603,30 @@ func resolveGroupDefaultPath(defaultPath string) string {
 	}
 
 	return baseRoot
+}
+
+// HasUsableDefaultPath reports whether the group resolves to an existing default
+// directory, without the git-subprocess work (worktree base-root mapping) that
+// DefaultPathForGroup performs. It is the cheap check used on the hot path of
+// opening the Quick Session dialog: spawning git there just to decide whether to
+// prompt for a folder added a visible delay before the dialog appeared.
+func (t *GroupTree) HasUsableDefaultPath(groupPath string) bool {
+	group, exists := t.Groups[groupPath]
+	if !exists {
+		return false
+	}
+
+	candidate := group.DefaultPath
+	if candidate == "" {
+		candidate = mostRecentPathForSessions(group.Sessions)
+	}
+	candidate = expandDefaultPath(candidate)
+	if candidate == "" {
+		return false
+	}
+
+	info, err := os.Stat(candidate)
+	return err == nil && info.IsDir()
 }
 
 // DefaultPathForGroup returns the effective default path for creating new sessions
