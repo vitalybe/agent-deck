@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -195,6 +196,11 @@ func TestIssue1353_LocalNOpensQuickDialog(t *testing.T) {
 		Path:  "proj",
 	}}
 	home.cursor = 0
+	// Quick Session requires the group to have a valid default folder, otherwise
+	// `n` prompts for one instead of opening the dialog. Register the group with
+	// an existing directory so the dialog opens.
+	home.groupTree.Groups["proj"] = &session.Group{Name: "proj", Path: "proj"}
+	home.groupTree.SetDefaultPathForGroup("proj", os.TempDir())
 
 	h := pressN(t, home)
 	if !h.quickDialog.IsVisible() {

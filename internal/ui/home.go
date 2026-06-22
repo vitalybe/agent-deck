@@ -8079,6 +8079,20 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		groupPath, groupName := h.quickSessionGroupContext()
+		// A Quick Session must land in the group's default folder; it no longer
+		// silently falls back to the process's cwd. If the group has no usable
+		// folder (a legacy group predating the mandatory-path rule), prompt the
+		// user to set one now via the group Edit dialog rather than guessing.
+		if h.getDefaultPathForGroup(groupPath) == "" {
+			if group, exists := h.groupTree.Groups[groupPath]; exists {
+				h.groupDialog.SetSize(h.width, h.height)
+				h.groupDialog.ShowRename(groupPath, group.Name, h.groupTree.ExplicitDefaultPathForGroup(groupPath))
+				h.groupDialog.SetError("Set a default folder for this group before starting a quick session")
+			} else {
+				h.setError(fmt.Errorf("group %q has no default folder; set one before starting a quick session", groupName))
+			}
+			return h, nil
+		}
 		h.quickDialog.SetSize(h.width, h.height)
 		h.quickDialog.Show(groupPath, groupName)
 		return h, nil
@@ -10674,11 +10688,14 @@ func (h *Home) submitQuickSession() (tea.Model, tea.Cmd) {
 // off the UI thread inside the returned command.
 func (h *Home) quickSessionCreate(prompt string, worktree bool, groupPath string) tea.Cmd {
 	// Resolve project path + tool on the UI goroutine (cheap config/cursor reads).
+	// The `n` handler guarantees a valid default folder before opening the dialog,
+	// so reaching here with an empty path means it vanished underneath us (e.g. the
+	// directory was deleted). Refuse rather than silently dropping the session in
+	// the process's cwd, which is what users complained about.
 	projectPath := h.getDefaultPathForGroup(groupPath)
 	if projectPath == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			projectPath = cwd
-		}
+		h.setError(fmt.Errorf("group has no default folder; set one before starting a quick session"))
+		return nil
 	}
 	tool := session.GetDefaultTool()
 	if tool == "" {

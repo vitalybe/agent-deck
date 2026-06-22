@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,6 +43,9 @@ func TestGroupDialogReopensAfterClose(t *testing.T) {
 			name: "after enter create",
 			close: func(h *Home) *Home {
 				h.groupDialog.nameInput.SetValue("alpha")
+				// Default path is now mandatory and must exist; supply a real dir
+				// so the create validates and the dialog actually closes.
+				h.groupDialog.pathInput.SetValue(os.TempDir())
 				model, _ := h.handleGroupDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
 				return model.(*Home)
 			},

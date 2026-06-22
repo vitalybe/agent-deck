@@ -340,10 +340,32 @@ func TestHomeUpdateNewDialog(t *testing.T) {
 	}
 }
 
+// seedQuickSessionDefaultGroup ensures the default group exists in the home's
+// group tree with a valid, existing default folder. Quick Session creation
+// (hotkey `n`) now refuses to fall back to the process's cwd, so tests that
+// exercise the `n` flow need the target group to resolve to a real directory.
+func seedQuickSessionDefaultGroup(h *Home) {
+	if h.groupTree == nil {
+		h.groupTree = session.NewGroupTree(nil)
+	}
+	if _, ok := h.groupTree.Groups[session.DefaultGroupPath]; !ok {
+		h.groupTree.Groups[session.DefaultGroupPath] = &session.Group{
+			Name: session.DefaultGroupName,
+			Path: session.DefaultGroupPath,
+		}
+	}
+	h.groupTree.SetDefaultPathForGroup(session.DefaultGroupPath, os.TempDir())
+	h.rebuildFlatItems()
+}
+
 func TestHomeUpdateQuickDialog(t *testing.T) {
 	home := NewHome()
 	home.width = 100
 	home.height = 30
+	// A Quick Session now requires the target group to have a valid default
+	// folder; seed one so `n` opens the Quick Session dialog rather than the
+	// group-editor prompt that fires for path-less groups.
+	seedQuickSessionDefaultGroup(home)
 
 	// Press n to open the ag-style Quick Session dialog.
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}

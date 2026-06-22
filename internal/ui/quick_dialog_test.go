@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
 func TestQuickDialog_ShowHide(t *testing.T) {
