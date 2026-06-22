@@ -10624,9 +10624,9 @@ func (h *Home) openQuickEditor(initial string) tea.Cmd {
 }
 
 // handleQuickDialogKey processes keys while the Quick Session dialog is visible.
-// The prompt is a multiline textarea: Enter on a line with text inserts a
-// newline, but Enter on an empty line submits (a trailing blank line means
-// "go"). Ctrl+S always submits; Tab toggles the worktree checkbox; Ctrl+G
+// The prompt is a multiline textarea, but Enter always submits — newlines are
+// inserted with Shift+Enter, Alt/Option+Enter, or Ctrl+J (handled inside the
+// textarea). Ctrl+S also submits; Tab toggles the worktree checkbox; Ctrl+G
 // composes in $EDITOR.
 func (h *Home) handleQuickDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -10638,14 +10638,8 @@ func (h *Home) handleQuickDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 	case "ctrl+g":
 		return h, h.openQuickEditor(h.quickDialog.Prompt())
-	case "ctrl+s":
+	case "ctrl+s", "enter", "ctrl+m":
 		return h.submitQuickSession()
-	case "enter":
-		// Enter on an empty line submits; otherwise insert a newline.
-		if h.quickDialog.CurrentLineEmpty() {
-			return h.submitQuickSession()
-		}
-		return h, h.quickDialog.UpdateInput(msg)
 	default:
 		return h, h.quickDialog.UpdateInput(msg)
 	}

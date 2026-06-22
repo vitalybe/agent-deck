@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -11,9 +12,13 @@ import (
 // QuickDialog is the ag-style Quick Session prompt (hotkey `n`). It is a
 // multiline text input for a task prompt plus a "Use Worktree" checkbox. On
 // submit the prompt both seeds a derived session/branch slug and is delivered
-// to the agent as its first message (collapsed to a single line). Ctrl+G opens
-// $EDITOR to compose the prompt; Tab toggles the worktree checkbox; Ctrl+S
-// creates. The heavyweight NewDialog (hotkey `N`) remains the full-control path.
+// to the agent as its first message (collapsed to a single line).
+//
+// Enter (or Ctrl+S) always submits. To insert a newline use Shift+Enter,
+// Option/Alt+Enter, or Ctrl+J. Word-wise editing works out of the box via the
+// textarea: Ctrl+Backspace / Ctrl+W / Alt+Backspace delete the previous word.
+// Ctrl+G opens $EDITOR to compose the prompt; Tab toggles the worktree
+// checkbox. The heavyweight NewDialog (hotkey `N`) remains the full-control path.
 type QuickDialog struct {
 	input           textarea.Model
 	worktreeEnabled bool
@@ -34,12 +39,33 @@ const (
 // NewQuickDialog creates the Quick Session dialog (hidden).
 func NewQuickDialog() *QuickDialog {
 	ta := textarea.New()
-	ta.Placeholder = "Describe the task…  (Enter: newline · blank line or Ctrl+S: create)"
+	ta.Placeholder = "Describe the task…  (Enter: create · Shift/Alt+Enter: newline)"
 	ta.CharLimit = 8000
 	ta.ShowLineNumbers = false
 	ta.Prompt = ""
 	ta.SetWidth(quickDialogPreferredWidth - 8)
 	ta.SetHeight(quickDialogInputRows)
+
+	// Enter submits (handled by the parent), so a newline needs an explicit
+	// key. Shift+Enter is only distinct on terminals with an enhanced keyboard
+	// protocol; Alt/Option+Enter works with Option-as-Meta; Ctrl+J (LF) is the
+	// reliable fallback that every terminal sends.
+	ta.KeyMap.InsertNewline = key.NewBinding(
+		key.WithKeys("shift+enter", "alt+enter", "ctrl+j"),
+		key.WithHelp("shift+enter", "insert newline"),
+	)
+	// Ctrl+Backspace deletes the previous word. macOS terminals emit ctrl+h
+	// (0x08) for Ctrl+Backspace while plain Backspace is 0x7f, so map ctrl+h to
+	// word-delete and drop it from single-char delete to avoid the clash.
+	ta.KeyMap.DeleteWordBackward = key.NewBinding(
+		key.WithKeys("ctrl+h", "ctrl+w", "alt+backspace"),
+		key.WithHelp("ctrl+backspace", "delete word backward"),
+	)
+	ta.KeyMap.DeleteCharacterBackward = key.NewBinding(
+		key.WithKeys("backspace"),
+		key.WithHelp("backspace", "delete character backward"),
+	)
+
 	ta.Blur()
 	return &QuickDialog{input: ta}
 }
@@ -118,19 +144,6 @@ func (d *QuickDialog) ToggleWorktree() {
 // GroupPath returns the parent-group path captured at Show time.
 func (d *QuickDialog) GroupPath() string { return d.groupPath }
 
-// CurrentLineEmpty reports whether the cursor's current line is blank
-// (whitespace only). Used so that pressing Enter on an empty line submits — a
-// trailing blank line means "go" — while Enter on a line with text inserts a
-// newline like a normal multiline editor.
-func (d *QuickDialog) CurrentLineEmpty() bool {
-	lines := strings.Split(d.input.Value(), "\n")
-	row := d.input.Line()
-	if row < 0 || row >= len(lines) {
-		return true
-	}
-	return strings.TrimSpace(lines[row]) == ""
-}
-
 // UpdateInput feeds a key into the text input. Submit/cancel/toggle/editor keys
 // are intercepted by the parent (handleQuickDialogKey) before reaching here.
 func (d *QuickDialog) UpdateInput(msg tea.KeyMsg) tea.Cmd {
@@ -174,7 +187,7 @@ func (d *QuickDialog) View() string {
 	}
 	content.WriteString(box + " " + labelStyle.Render("Use Worktree") + hintStyle.Render("  (tab toggles)"))
 	content.WriteString("\n\n")
-	content.WriteString(hintStyle.Render("⏎ blank line / ctrl+s create │ tab worktree │ ctrl+g edit │ esc"))
+	content.WriteString(hintStyle.Render("⏎ create │ shift/alt+⏎ newline │ tab worktree │ ctrl+g edit │ esc"))
 
 	dialog := dialogStyle.Render(content.String())
 	return lipgloss.Place(d.width, d.height, lipgloss.Center, lipgloss.Center, dialog)
