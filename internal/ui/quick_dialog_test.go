@@ -84,8 +84,7 @@ func TestQuickDialog_EscHides(t *testing.T) {
 }
 
 // TestQuickDialog_CtrlSEmptyPromptStaysOpen verifies a blank prompt does not
-// submit (and does not crash trying to create a session). Submit is Ctrl+S now
-// that the input is a multiline textarea (Enter inserts a newline).
+// submit (and does not crash trying to create a session).
 func TestQuickDialog_CtrlSEmptyPromptStaysOpen(t *testing.T) {
 	h := NewHome()
 	h.width = 100
@@ -100,40 +99,60 @@ func TestQuickDialog_CtrlSEmptyPromptStaysOpen(t *testing.T) {
 	}
 }
 
-// TestQuickDialog_EnterOnTextLineInsertsNewline verifies Enter on a line that
-// has text inserts a newline (does not submit/close the dialog).
-func TestQuickDialog_EnterOnTextLineInsertsNewline(t *testing.T) {
+// TestQuickDialog_NewlineKeyInsertsNewline verifies a newline key (Ctrl+J, one
+// of the InsertNewline bindings alongside Shift/Alt+Enter) inserts a newline
+// rather than submitting/closing the dialog.
+func TestQuickDialog_NewlineKeyInsertsNewline(t *testing.T) {
 	h := NewHome()
 	h.width = 100
 	h.height = 30
 	h.quickDialog.Show("default", "default")
-	h.quickDialog.SetPrompt("line one") // cursor lands at end of a non-empty line
-	if h.quickDialog.CurrentLineEmpty() {
-		t.Fatal("precondition: current line should be non-empty")
-	}
-	h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.quickDialog.SetPrompt("line one")
+	h.quickDialog.input.CursorEnd()
+	h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
 	if !h.quickDialog.IsVisible() {
-		t.Error("Enter on a non-empty line must insert a newline, not submit")
+		t.Error("a newline key must insert a newline, not submit")
+	}
+	if got := h.quickDialog.input.Value(); got != "line one\n" {
+		t.Errorf("newline key should insert a newline, got %q", got)
 	}
 }
 
-// TestQuickDialog_EnterOnEmptyLineSubmits verifies Enter on a blank line ends
-// input: with a non-empty prompt it closes the dialog and returns a create cmd.
-func TestQuickDialog_EnterOnEmptyLineSubmits(t *testing.T) {
+// TestQuickDialog_EnterSubmits verifies Enter always submits: with a non-empty
+// prompt it closes the dialog and returns a create cmd. The group needs a valid
+// default folder, otherwise quickSessionCreate refuses (no cwd fallback).
+func TestQuickDialog_EnterSubmits(t *testing.T) {
+	h := NewHome()
+	h.width = 100
+	h.height = 30
+	tmp := t.TempDir()
+	if _, exists := h.groupTree.Groups["default"]; !exists {
+		h.groupTree.CreateGroup("default")
+	}
+	h.groupTree.SetDefaultPathForGroup("default", tmp)
+	h.quickDialog.Show("default", "default")
+	h.quickDialog.SetPrompt("do the thing")
+	_, cmd := h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if h.quickDialog.IsVisible() {
+		t.Error("Enter with a non-empty prompt must submit/close")
+	}
+	if cmd == nil {
+		t.Error("submit should return a create command")
+	}
+}
+
+// TestQuickDialog_CtrlBackspaceDeletesWord verifies Ctrl+Backspace (which macOS
+// terminals emit as ctrl+h) deletes the previous word.
+func TestQuickDialog_CtrlBackspaceDeletesWord(t *testing.T) {
 	h := NewHome()
 	h.width = 100
 	h.height = 30
 	h.quickDialog.Show("default", "default")
-	h.quickDialog.SetPrompt("do the thing\n") // trailing newline → cursor on empty line
-	if !h.quickDialog.CurrentLineEmpty() {
-		t.Fatal("precondition: current line should be empty after a trailing newline")
-	}
-	_, cmd := h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if h.quickDialog.IsVisible() {
-		t.Error("Enter on an empty line with a non-empty prompt must submit/close")
-	}
-	if cmd == nil {
-		t.Error("submit should return a create command")
+	h.quickDialog.SetPrompt("hello world")
+	h.quickDialog.input.CursorEnd()
+	h.handleQuickDialogKey(tea.KeyMsg{Type: tea.KeyCtrlH})
+	if got := h.quickDialog.input.Value(); got != "hello " {
+		t.Errorf("Ctrl+Backspace should delete the previous word, got %q", got)
 	}
 }
 
