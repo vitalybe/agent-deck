@@ -5386,6 +5386,9 @@ func (h *Home) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case claudeHistorySelectedMsg:
+		return h.handleClaudeHistorySelected(msg)
+
 	case promptSubmitMsg:
 		// #1410: deliver a one-line prompt to the highlighted session without
 		// attaching, reusing the prompt-state-aware send path (the #1409/#1432
@@ -6432,59 +6435,72 @@ func (h *Home) jumpToSession(inst *session.Instance) {
 
 // createSessionFromGlobalSearch creates a new Agent Deck session from global search result
 func (h *Home) createSessionFromGlobalSearch(result *GlobalSearchResult) tea.Cmd {
-	return func() tea.Msg {
-		// Derive title from CWD or session ID
-		title := "Claude Session"
-		projectPath := result.CWD
-		if result.CWD != "" {
-			parts := strings.Split(result.CWD, "/")
-			if len(parts) > 0 {
-				title = parts[len(parts)-1]
-			}
-		}
-		if projectPath == "" {
-			projectPath = "."
-		}
-
-		// Create instance. Issue #666: resolveNewSessionGroup rescues empty
-		// cursor-group (Window / RemoteGroup / placeholder flatItems) so
-		// the empty string never reaches NewInstanceWithGroupAndTool, which
-		// would otherwise override the extractGroupPath default with "".
-		inst := session.NewInstanceWithGroupAndTool(title, projectPath, h.resolveNewSessionGroup(), "claude")
-		inst.ClaudeSessionID = result.SessionID
-
-		// Build resume command with config dir and permission flags
-		userConfig, _ := session.LoadUserConfig()
-		opts := session.NewClaudeOptions(userConfig)
-
-		// Build command - only set CLAUDE_CONFIG_DIR if explicitly configured
-		// If not explicit, let the tmux shell's environment handle it
-		// This is critical for WSL and other environments where users have
-		// CLAUDE_CONFIG_DIR set in their .bashrc/.zshrc
-		var cmdBuilder strings.Builder
-		if session.IsClaudeConfigDirExplicitForGroup(inst.GroupPath) {
-			configDir := session.GetClaudeConfigDirForGroup(inst.GroupPath)
-			cmdBuilder.WriteString(fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir))
-		}
-		cmdBuilder.WriteString("claude --resume ")
-		cmdBuilder.WriteString(result.SessionID)
-		if opts.SkipPermissions {
-			cmdBuilder.WriteString(" --dangerously-skip-permissions")
-		} else if opts.AllowSkipPermissions {
-			cmdBuilder.WriteString(" --allow-dangerously-skip-permissions")
-		}
-		inst.Command = cmdBuilder.String()
-
-		// Persist options so restarts use per-session settings
-		_ = inst.SetClaudeOptions(opts)
-
-		// Start the session
-		if err := inst.Start(); err != nil {
-			return sessionCreatedMsg{err: fmt.Errorf("failed to start session: %w", err)}
-		}
-
-		return sessionCreatedMsg{instance: inst}
+	projectPath := result.CWD
+	if projectPath == "" {
+		projectPath = "."
 	}
+	// Issue #666: resolveNewSessionGroup rescues empty cursor-group (Window /
+	// RemoteGroup / placeholder flatItems) so the empty string never reaches
+	// NewInstanceWithGroupAndTool, which would otherwise override the
+	// extractGroupPath default with "".
+	groupPath := h.resolveNewSessionGroup()
+	return func() tea.Msg {
+		return buildResumedClaudeSession(result.SessionID, projectPath, groupPath)
+	}
+}
+
+// buildResumedClaudeSession constructs, starts, and returns a TUI instance that
+// resumes the given Claude session ID in projectPath under groupPath. It is the
+// shared core behind both the global-search import and the Ctrl+H history
+// picker; callers decide the group, this builds the `claude --resume` command
+// (honoring per-group config dir and permission flags) and launches it.
+func buildResumedClaudeSession(sessionID, projectPath, groupPath string) tea.Msg {
+	if projectPath == "" {
+		projectPath = "."
+	}
+	// Derive title from the project folder's leaf, falling back to a generic
+	// label when none is meaningful (empty or the "." placeholder path).
+	title := "Claude Session"
+	if parts := strings.Split(projectPath, "/"); len(parts) > 0 {
+		if leaf := parts[len(parts)-1]; leaf != "" && leaf != "." {
+			title = leaf
+		}
+	}
+
+	inst := session.NewInstanceWithGroupAndTool(title, projectPath, groupPath, "claude")
+	inst.ClaudeSessionID = sessionID
+
+	// Build resume command with config dir and permission flags
+	userConfig, _ := session.LoadUserConfig()
+	opts := session.NewClaudeOptions(userConfig)
+
+	// Build command - only set CLAUDE_CONFIG_DIR if explicitly configured.
+	// If not explicit, let the tmux shell's environment handle it. This is
+	// critical for WSL and other environments where users have
+	// CLAUDE_CONFIG_DIR set in their .bashrc/.zshrc.
+	var cmdBuilder strings.Builder
+	if session.IsClaudeConfigDirExplicitForGroup(inst.GroupPath) {
+		configDir := session.GetClaudeConfigDirForGroup(inst.GroupPath)
+		cmdBuilder.WriteString(fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir))
+	}
+	cmdBuilder.WriteString("claude --resume ")
+	cmdBuilder.WriteString(sessionID)
+	if opts.SkipPermissions {
+		cmdBuilder.WriteString(" --dangerously-skip-permissions")
+	} else if opts.AllowSkipPermissions {
+		cmdBuilder.WriteString(" --allow-dangerously-skip-permissions")
+	}
+	inst.Command = cmdBuilder.String()
+
+	// Persist options so restarts use per-session settings
+	_ = inst.SetClaudeOptions(opts)
+
+	// Start the session
+	if err := inst.Start(); err != nil {
+		return sessionCreatedMsg{err: fmt.Errorf("failed to start session: %w", err)}
+	}
+
+	return sessionCreatedMsg{instance: inst}
 }
 
 // getCurrentGroupPath returns the group path of the currently selected item
@@ -8524,6 +8540,13 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		return h, cmd
+
+	case "ctrl+h":
+		// Browse Claude conversation history in a popup (claude-history -s).
+		// Selecting a conversation focuses it if it is already in the TUI, or
+		// resumes it under a folder-matched group otherwise. Ctrl+Q inside the
+		// picker cancels (no JSON emitted -> no-op).
+		return h, h.runClaudeHistoryPicker()
 
 	case "ctrl+s":
 		// Open the session switcher from the overview too, with the same key
@@ -13917,6 +13940,13 @@ func (h *Home) renderHelpBarCompact() string {
 		}
 	}
 
+	// History (Ctrl+H) is a global discovery action available in every context;
+	// surface it on the left (just after the primary action) so it survives the
+	// right-side global drop and trailing-item clipping on narrow terminals.
+	if key := h.actionKey(hotkeyClaudeHistory); key != "" {
+		contextHints = insertHintAfterFirst(contextHints, h.helpKeyShort(key, "History"))
+	}
+
 	// Show undo hint when undo stack is non-empty
 	if len(h.undoStack) > 0 {
 		if key := h.actionKey(hotkeyUndoDelete); key != "" {
@@ -14118,6 +14148,15 @@ func (h *Home) renderHelpBarFull() string {
 		}
 	}
 
+	// History is a global discovery action (Ctrl+H) available in every context.
+	// Keep it on the always-visible left rather than the right-side globals,
+	// which the verbose bar drops as a block on narrower terminals. Insert it
+	// just after the primary action so a long context list clips trailing
+	// items (which remain reachable by key + under help) before History.
+	if key := h.actionKey(hotkeyClaudeHistory); key != "" {
+		primaryHints = insertHintAfterFirst(primaryHints, h.helpKey(key, "History"))
+	}
+
 	// Show undo hint when undo stack is non-empty
 	if len(h.undoStack) > 0 {
 		if undoKey != "" {
@@ -14204,6 +14243,20 @@ func (h *Home) renderHelpBarFull() string {
 
 	raw := lipgloss.JoinVertical(lipgloss.Left, border, helpContent)
 	return lipgloss.NewStyle().MaxWidth(h.width).Render(raw)
+}
+
+// insertHintAfterFirst returns hints with hint placed at index 1 (just after
+// the primary action), or appended when the list is empty. Keeping a global
+// hint near the front means width-based right-edge clipping drops trailing
+// context items before it.
+func insertHintAfterFirst(hints []string, hint string) []string {
+	if len(hints) == 0 {
+		return append(hints, hint)
+	}
+	out := make([]string, 0, len(hints)+1)
+	out = append(out, hints[0], hint)
+	out = append(out, hints[1:]...)
+	return out
 }
 
 // helpKey formats a keyboard shortcut for the help bar
