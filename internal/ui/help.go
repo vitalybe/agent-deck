@@ -170,6 +170,7 @@ func (h *HelpOverlay) View() string {
 	reorderDownKeys := "- / J / Shift+↓"
 	indentKeys := "Shift+→/←"
 	searchKey := h.key(hotkeySearch, "/")
+	claudeHistoryKey := h.key(hotkeyClaudeHistory, "Ctrl+H")
 	settingsKey := h.key(hotkeySettings, "S")
 	helpKey := h.key(hotkeyHelp, "?")
 	quitKey := h.key(hotkeyQuit, "q")
@@ -304,6 +305,7 @@ func (h *HelpOverlay) View() string {
 			title: "SEARCH & FILTER",
 			items: [][2]string{
 				{searchKey, "Open search"},
+				{claudeHistoryKey, "Browse Claude history (resume/focus a session)"},
 				{FilterKeyActive, "Filter open (hide errors)"},
 				{"/waiting", "Filter waiting"},
 				{"/running", "Filter running"},

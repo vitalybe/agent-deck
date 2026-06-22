@@ -48,6 +48,7 @@ const (
 	hotkeyReload           = "reload"
 	hotkeyDetach           = "detach"
 	hotkeyWatcherPanel     = "watcher_panel"
+	hotkeyClaudeHistory    = "claude_history" // Ctrl+H: pick a past Claude session to focus/resume
 	// Session switcher. While attached it is intercepted in the tmux attach
 	// loop (see internal/tmux/pty.go AttachOptions); on the home screen it is
 	// dispatched like any other hotkey. Must resolve to a "ctrl+<letter>" chord.
@@ -100,6 +101,7 @@ var hotkeyActionOrder = []string{
 	hotkeyReload,
 	hotkeyDetach,
 	hotkeyWatcherPanel,
+	hotkeyClaudeHistory,
 	hotkeySwitchSession,
 }
 
@@ -144,6 +146,7 @@ var defaultHotkeyBindings = map[string]string{
 	hotkeyReload:           "ctrl+r",
 	hotkeyDetach:           "ctrl+q",
 	hotkeyWatcherPanel:     "w",
+	hotkeyClaudeHistory:    "ctrl+h",
 	hotkeySwitchSession:    "ctrl+s",
 }
 

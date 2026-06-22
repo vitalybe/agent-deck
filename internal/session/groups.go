@@ -1667,6 +1667,54 @@ func (t *GroupTree) SetDefaultPathForGroup(groupPath, defaultPath string) bool {
 	return true
 }
 
+// FindGroupByDefaultFolder returns the group whose effective default folder
+// resolves to the same directory as folder, or nil when none matches. Both
+// sides are normalized through resolveGroupDefaultPath, so git worktrees fold
+// onto their shared base root the same way they do everywhere else in the tree.
+func (t *GroupTree) FindGroupByDefaultFolder(folder string) *Group {
+	target := resolveGroupDefaultPath(folder)
+	if target == "" {
+		return nil
+	}
+	target = filepath.Clean(target)
+	for _, g := range t.GroupList {
+		def := t.DefaultPathForGroup(g.Path)
+		if def == "" {
+			continue
+		}
+		if filepath.Clean(def) == target {
+			return g
+		}
+	}
+	return nil
+}
+
+// CreateGroupForFolder creates a new root group whose default folder is folder,
+// named after that folder's leaf directory. The path is disambiguated with a
+// numeric suffix when a same-named group already exists, so the new group never
+// aliases an unrelated one. folder is resolved (worktrees -> base root) before
+// naming so the group name fits the directory it actually points at.
+func (t *GroupTree) CreateGroupForFolder(folder string) *Group {
+	resolved := resolveGroupDefaultPath(folder)
+	base := filepath.Base(resolved)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = "session"
+	}
+	name := base
+	for i := 2; ; i++ {
+		path := strings.ReplaceAll(sanitizeGroupName(name), " ", "-")
+		if _, exists := t.Groups[path]; !exists {
+			break
+		}
+		name = fmt.Sprintf("%s-%d", base, i)
+	}
+	g := t.CreateGroup(name)
+	if g != nil {
+		t.SetDefaultPathForGroup(g.Path, resolved)
+	}
+	return g
+}
+
 // updateGroupDefaultPath normalizes persisted explicit default paths.
 // Derived fallback paths are computed on demand in DefaultPathForGroup().
 func (t *GroupTree) updateGroupDefaultPath(groupPath string) {
